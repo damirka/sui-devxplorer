@@ -728,7 +728,7 @@ query PackagePublish($address: SuiAddress!) {
     asMovePackage {
       packageAt(version: 1) {
         address
-        previousTransaction { digest }
+        previousTransaction { digest sender { address } }
       }
     }
   }
@@ -836,13 +836,19 @@ export async function fetchPackageUpgradeCap(
   packageId: string,
   signal?: AbortSignal,
 ): Promise<PackageUpgradeCap | null> {
-  // 1. The package's v1 (original) id + the tx that published it.
+  // 1. The package's v1 (original) id + the tx that published it. A null sender
+  //    means a system/genesis tx (the framework packages) — never a normal
+  //    publish, so there's no UpgradeCap to find; bail before scanning the huge
+  //    genesis object-change set.
   const { data: pub } = await gqlRequest<{
     object: {
       asMovePackage: {
         packageAt: {
           address: string
-          previousTransaction: { digest: string } | null
+          previousTransaction: {
+            digest: string
+            sender: { address: string } | null
+          } | null
         } | null
       } | null
     } | null
@@ -850,7 +856,7 @@ export async function fetchPackageUpgradeCap(
   const v1 = pub.object?.asMovePackage?.packageAt
   const originalId = v1?.address
   const digest = v1?.previousTransaction?.digest
-  if (!originalId || !digest) return null
+  if (!originalId || !digest || !v1?.previousTransaction?.sender) return null
 
   // 2. The UpgradeCap created in that publish tx. A publish PTB can publish
   //    several packages (each with its own cap), so match the one whose
