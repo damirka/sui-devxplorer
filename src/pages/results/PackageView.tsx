@@ -8,6 +8,7 @@ import { fetchObject } from '@/lib/object'
 import { normalizeSuiId } from '@/lib/search'
 import { ResultHeader } from './ResultHeader'
 import { PackageBody } from './PackageBody'
+import { MvrChip } from './MvrChip'
 
 /**
  * Package view for a qualified path — `addr::module` or `addr::module::Type`
@@ -38,7 +39,12 @@ export function PackageView({ value }: { value: string }) {
         kind="package"
         label="Package"
         value={value}
-        meta={<LinkedHash value={packageId} />}
+        meta={
+          <span className="flex flex-wrap items-center gap-3">
+            <LinkedHash value={packageId} />
+            <MvrChip packageId={packageId} />
+          </span>
+        }
       />
 
       {loading && (

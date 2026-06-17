@@ -3,6 +3,7 @@ import { ObjectView } from './ObjectView'
 import { TransactionView } from './TransactionView'
 import { PackageView } from './PackageView'
 import { SuinsView } from './SuinsView'
+import { MvrView } from './MvrView'
 import { NotFound } from './NotFound'
 
 /** Classify the raw search string and render the matching result view. */
@@ -18,6 +19,8 @@ export function ResultRouter({ search }: { search: string }) {
       return <PackageView value={value} />
     case 'suins':
       return <SuinsView value={value} />
+    case 'mvr':
+      return <MvrView value={value} />
     case 'unknown':
       return <NotFound value={search} />
   }

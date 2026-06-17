@@ -6,19 +6,52 @@ import { Field, FieldGrid, Muted } from '@/components/ui/Field'
 import { describeOwner, type SuiObject } from '@/lib/object'
 
 /**
- * The shared object/package overview: owner, version, storage rebate, previous
- * tx, and digest. The `type` slot is supplied by the caller — a `TypeLink` for
- * Move objects, a plain "package" label for packages — since that's the one
- * field whose rendering differs between the two.
+ * The shared object/package overview: type, owner, version, storage rebate,
+ * previous tx, and digest. The `type` slot is supplied by the caller — a
+ * `TypeLink` for Move objects. Packages set `isPackage` to drop the fields that
+ * don't apply to an immutable package (type, owner, storage rebate).
  */
 export function ObjectOverview({
   data,
   type,
+  isPackage = false,
 }: {
   data: SuiObject
-  type: ReactNode
+  type?: ReactNode
+  isPackage?: boolean
 }) {
   const owner = describeOwner(data.owner)
+
+  // A package has only three relevant fields — lay them out as compact
+  // one-line `LABEL value` rows that wrap, instead of the tall label-above grid.
+  if (isPackage) {
+    return (
+      <Panel>
+        <PanelSection>
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-10 sm:gap-y-3">
+            <Field inline label="Version">
+              <span className="font-mono text-sm">{data.version ?? '—'}</span>
+            </Field>
+            <Field inline label="Previous tx">
+              {data.previousTransaction ? (
+                <LinkedHash value={data.previousTransaction.digest} />
+              ) : (
+                <Muted>—</Muted>
+              )}
+            </Field>
+            <Field inline label="Digest">
+              {data.digest ? (
+                <Hash value={data.digest} copy />
+              ) : (
+                <Muted>—</Muted>
+              )}
+            </Field>
+          </div>
+        </PanelSection>
+      </Panel>
+    )
+  }
+
   return (
     <Panel>
       <PanelSection>

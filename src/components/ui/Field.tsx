@@ -1,14 +1,25 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 
-/** A labeled datum: terminal-style label above its value. */
+/** A labeled datum: terminal-style label above its value, or — with `inline` —
+ * label and value on a single compact line (`LABEL  value`). */
 export function Field({
   label,
   children,
+  inline = false,
 }: {
   label: string
   children: ReactNode
+  inline?: boolean
 }) {
+  if (inline) {
+    return (
+      <div className="flex items-center gap-2.5">
+        <span className="panel-label shrink-0">{label}</span>
+        <div className="min-w-0">{children}</div>
+      </div>
+    )
+  }
   return (
     <div className="space-y-2">
       <span className="panel-label">{label}</span>

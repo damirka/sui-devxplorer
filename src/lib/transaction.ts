@@ -99,7 +99,10 @@ query Transaction($digest: String!) {
           address
           idCreated
           idDeleted
-          outputState { asMoveObject { contents { type { repr } } } }
+          outputState {
+            asMoveObject { contents { type { repr } } }
+            asMovePackage { version }
+          }
         }
       }
       balanceChanges(first: 50) {
@@ -227,6 +230,7 @@ export interface ObjectChangeNode {
   idDeleted: boolean | null
   outputState: {
     asMoveObject: { contents: { type: { repr: string } } | null } | null
+    asMovePackage: { version: number | null } | null
   } | null
 }
 
@@ -461,6 +465,22 @@ export function usedResults(commands: TxCommand[]): Set<number> {
     }
   }
   return used
+}
+
+/**
+ * The 0-based index of the command a failed PTB aborted in, parsed from the
+ * execution-error message (the schema has no dedicated field). Sui phrases it as
+ * a 1-based ordinal — e.g. `"Error in 10th command, … abort code: 0"` → 9.
+ * `null` when the message is absent or doesn't name a command.
+ */
+export function failedCommandIndex(
+  message: string | null | undefined,
+): number | null {
+  if (!message) return null
+  const m = /\b(\d+)(?:st|nd|rd|th) command\b/i.exec(message)
+  if (!m) return null
+  const ordinal = Number(m[1])
+  return ordinal >= 1 ? ordinal - 1 : null
 }
 
 /** Net gas used = computation + storage − rebate (in MIST). `null` if unknown. */

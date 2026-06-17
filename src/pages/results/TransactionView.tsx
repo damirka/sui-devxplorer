@@ -1,10 +1,10 @@
-import { useState, type ReactNode } from 'react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { LinkedHash, TypeLink, useSearchHref } from '@/components/ui/links'
+import { LinkedHash, TypeLink, useSearchHref, linkifyMoveText } from '@/components/ui/links'
 import { JsonBlock, linkifyAddresses } from '@/components/ui/JsonBlock'
 import { HoverCard } from '@/components/ui/HoverCard'
 import { CopyButton } from '@/components/ui/CopyButton'
@@ -15,11 +15,13 @@ import { truncateMiddle } from '@/lib/search'
 import { formatSui, formatTimestamp, formatType, formatSignatureType } from '@/lib/format'
 import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
+import { reverseResolveMvrBulk, mvrAppUrl } from '@/lib/mvr'
 import {
   fetchTransaction,
   fetchFunctionDisassembly,
   usedResults,
   netGasUsed,
+  failedCommandIndex,
   inputType,
   addressLikeArity,
   type SuiTransaction,
@@ -87,6 +89,12 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
   const kind = tx.kind
   const ptb = kind?.__typename === 'ProgrammableTransaction' ? kind : null
   const used = netGasUsed(fx?.gasEffects?.gasSummary)
+  // On failure, the command index the PTB aborted in (if the error names one) —
+  // used to red-flag that command in the script.
+  const failedCommand =
+    fx?.status === 'FAILURE'
+      ? failedCommandIndex(fx.executionError?.message)
+      : null
   const [inputsOpen, setInputsOpen] = useState(false)
 
   return (
@@ -161,14 +169,28 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
               </span>
               <pre className={DANGER_PRE}>
                 <code>
-                  {[
-                    fx.executionError.identifier && `${fx.executionError.identifier}`,
-                    fx.executionError.abortCode != null &&
-                      `abort code ${fx.executionError.abortCode}`,
-                    fx.executionError.message,
-                  ]
-                    .filter(Boolean)
-                    .join('\n') || 'transaction failed'}
+                  {(() => {
+                    const ee = fx.executionError
+                    // identifier + abort code are plain; the message is where a
+                    // `pkg::module::fn` path appears — linkify it.
+                    const head = [
+                      ee.identifier || null,
+                      ee.abortCode != null ? `abort code ${ee.abortCode}` : null,
+                    ].filter(Boolean) as string[]
+                    return (
+                      <>
+                        {head.map((line) => (
+                          <Fragment key={line}>
+                            {line}
+                            {'\n'}
+                          </Fragment>
+                        ))}
+                        {ee.message
+                          ? linkifyMoveText(ee.message)
+                          : head.length === 0 && 'transaction failed'}
+                      </>
+                    )
+                  })()}
                 </code>
               </pre>
             </div>
@@ -182,6 +204,7 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
             commands={ptb.commands.nodes}
             inputs={ptb.inputs.nodes}
             hasNextPage={ptb.commands.pageInfo.hasNextPage}
+            failedCommand={failedCommand}
           />
 
           <Panel>
@@ -367,40 +390,32 @@ function isHexId(v: unknown): v is string {
 }
 
 /**
- * The programmable block rendered as a readable script: one statement per
- * command, results bound to `resN` when a later command consumes them, and
- * every argument referenced by name (`inputN`, `resN`, `gas`). Hovering a name
- * reveals its type, value, and links — so the structure reads end to end
- * without cross-referencing the inputs list.
- */
-/**
- * The programmable block rendered as valid `@mysten/sui` TS SDK code (see
- * `buildSdkProgram`): inputs declared as `tx.object(...)` / `tx.pure.<type>(...)`,
- * each command as its builder call with filled `typeArguments`, results bound to
- * `resN`. Object ids are linkified so they stay clickable.
- */
-/**
  * The Program panel: a tabbed view of the programmable block. The "script" tab
  * (default) is the readable pseudo-Move script with hover cards; the "ts sdk"
- * tab is valid `@mysten/sui` code. The copy button copies whichever is active.
+ * and "sui cli" tabs are copy-pasteable code. The copy button copies whichever
+ * is active.
  */
 function ProgramPanel({
   commands,
   inputs,
   hasNextPage,
+  failedCommand,
 }: {
   commands: TxCommand[]
   inputs: TxInput[]
   hasNextPage: boolean
+  /** 0-based index of the command that aborted (failed txs), or null. */
+  failedCommand?: number | null
 }) {
   const [tab, setTab] = useState<'script' | 'sdk' | 'cli'>('script')
   const empty = commands.length === 0
-  const copyValue =
-    tab === 'sdk'
-      ? buildSdkProgram(commands, inputs)
-      : tab === 'cli'
-        ? buildCliProgram(commands, inputs)
-        : programToText(commands, inputs)
+  // Build each form once per (commands, inputs) and reuse for both the copy
+  // button and the rendered pane — the active form was otherwise rebuilt on
+  // every render (and twice over for the sdk/cli tabs).
+  const sdk = useMemo(() => buildSdkProgram(commands, inputs), [commands, inputs])
+  const cli = useMemo(() => buildCliProgram(commands, inputs), [commands, inputs])
+  const script = useMemo(() => programToText(commands, inputs), [commands, inputs])
+  const copyValue = tab === 'sdk' ? sdk : tab === 'cli' ? cli : script
   const copyLabel =
     tab === 'sdk' ? 'Copy as TS SDK' : tab === 'cli' ? 'Copy CLI command' : 'Copy script'
 
@@ -440,11 +455,13 @@ function ProgramPanel({
               </TabButton>
             </div>
             {tab === 'script' ? (
-              <CommandScript commands={commands} inputs={inputs} />
-            ) : tab === 'sdk' ? (
-              <SdkProgram commands={commands} inputs={inputs} />
+              <CommandScript
+                commands={commands}
+                inputs={inputs}
+                failedCommand={failedCommand}
+              />
             ) : (
-              <CliProgram commands={commands} inputs={inputs} />
+              <ProgramCode code={tab === 'sdk' ? sdk : cli} />
             )}
           </>
         )}
@@ -488,14 +505,18 @@ function TabButton({
 function CommandScript({
   commands,
   inputs,
+  failedCommand,
 }: {
   commands: TxCommand[]
   inputs: TxInput[]
+  failedCommand?: number | null
 }) {
   const used = usedResults(commands)
 
+  // A two-column grid (index gutter | code) so the line-number column reads like
+  // GitHub and the failed-command highlight can span the whole row.
   return (
-    <div className="bg-bg/60 border-line space-y-1 border p-4 font-mono text-xs leading-6">
+    <div className="bg-bg/60 border-line grid grid-cols-[auto_1fr] border p-4 font-mono text-xs leading-6">
       {commands.map((cmd, i) => (
         <CommandStatement
           key={i}
@@ -504,6 +525,7 @@ function CommandScript({
           inputs={inputs}
           commands={commands}
           assigned={used.has(i)}
+          failed={i === failedCommand}
         />
       ))}
     </div>
@@ -516,28 +538,49 @@ function CommandStatement({
   inputs,
   commands,
   assigned,
+  failed,
 }: {
   index: number
   cmd: TxCommand
   inputs: TxInput[]
   commands: TxCommand[]
   assigned: boolean
+  failed: boolean
 }) {
   return (
-    <div className="break-words whitespace-pre-wrap">
-      {assigned && (
-        <>
-          <span className="text-muted">let </span>
-          <ResultToken cmd={index} ix={null} commands={commands} />
-          <span className="text-muted"> = </span>
-        </>
-      )}
-      <CallExpr cmd={cmd} inputs={inputs} commands={commands} />
-      <span className="text-muted">;</span>
-      {cmd.__typename === 'MoveCallCommand' && cmd.function && (
-        <MoveCallAsm fn={cmd.function} />
-      )}
-    </div>
+    <>
+      {/* Command-index gutter (GitHub-style line numbers): 0-based to match
+          `resN` and the index a failed tx reports. `select-none` keeps it out of
+          manual copies; the copy button copies the generated text, not the DOM. */}
+      <span
+        aria-hidden
+        className={cn(
+          'border-line shrink-0 select-none border-r pr-4 text-right tabular-nums',
+          failed ? 'bg-danger/15 text-danger' : 'text-muted/50',
+        )}
+      >
+        {index}
+      </span>
+      <div
+        className={cn(
+          'min-w-0 break-words whitespace-pre-wrap pl-4',
+          failed && 'bg-danger/15',
+        )}
+      >
+        {assigned && (
+          <>
+            <span className="text-muted">let </span>
+            <ResultToken cmd={index} ix={null} commands={commands} />
+            <span className="text-muted"> = </span>
+          </>
+        )}
+        <CallExpr cmd={cmd} inputs={inputs} commands={commands} />
+        <span className="text-muted">;</span>
+        {cmd.__typename === 'MoveCallCommand' && cmd.function && (
+          <MoveCallAsm fn={cmd.function} />
+        )}
+      </div>
+    </>
   )
 }
 
@@ -875,30 +918,8 @@ function commandKind(cmd: TxCommand): string {
   }
 }
 
-function SdkProgram({
-  commands,
-  inputs,
-}: {
-  commands: TxCommand[]
-  inputs: TxInput[]
-}) {
-  const code = buildSdkProgram(commands, inputs)
-  return (
-    <pre className="bg-bg/60 border-line overflow-x-auto border p-4 font-mono text-xs leading-6">
-      <code>{linkifyAddresses(code)}</code>
-    </pre>
-  )
-}
-
-/** The PTB as a `sui client ptb` CLI command (see `buildCliProgram`). */
-function CliProgram({
-  commands,
-  inputs,
-}: {
-  commands: TxCommand[]
-  inputs: TxInput[]
-}) {
-  const code = buildCliProgram(commands, inputs)
+/** A built program string (TS SDK or CLI) rendered with ids linkified. */
+function ProgramCode({ code }: { code: string }) {
   return (
     <pre className="bg-bg/60 border-line overflow-x-auto border p-4 font-mono text-xs leading-6">
       <code>{linkifyAddresses(code)}</code>
@@ -907,10 +928,24 @@ function CliProgram({
 }
 
 function ObjectChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) {
+  const { network } = useNetwork()
   const nodes = fx.objectChanges.nodes
   const created = nodes.filter((n) => n.idCreated && !n.idDeleted)
   const deleted = nodes.filter((n) => n.idDeleted)
   const mutated = nodes.filter((n) => !n.idCreated && !n.idDeleted)
+
+  // Every package touched by this tx, named in one bulk MVR reverse-resolution.
+  const pkgIds = nodes
+    .filter((n) => n.outputState?.asMovePackage)
+    .map((n) => n.address)
+  const { data: names } = useAsync(
+    (signal) =>
+      pkgIds.length
+        ? reverseResolveMvrBulk(network, pkgIds, signal)
+        : Promise.resolve<Record<string, string>>({}),
+    [network, pkgIds.join(',')],
+  )
+  const mvrNames = names ?? {}
 
   return (
     <PanelSection
@@ -927,9 +962,9 @@ function ObjectChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) {
         <Muted>no object changes.</Muted>
       ) : (
         <div className="space-y-4">
-          <ObjectChangeGroup label="created" nodes={created} />
-          <ObjectChangeGroup label="mutated" nodes={mutated} />
-          <ObjectChangeGroup label="deleted" nodes={deleted} />
+          <ObjectChangeGroup label="created" nodes={created} mvrNames={mvrNames} />
+          <ObjectChangeGroup label="mutated" nodes={mutated} mvrNames={mvrNames} />
+          <ObjectChangeGroup label="deleted" nodes={deleted} mvrNames={mvrNames} />
         </div>
       )}
     </PanelSection>
@@ -939,9 +974,11 @@ function ObjectChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) {
 function ObjectChangeGroup({
   label,
   nodes,
+  mvrNames,
 }: {
   label: string
   nodes: NonNullable<SuiTransaction['effects']>['objectChanges']['nodes']
+  mvrNames: Record<string, string>
 }) {
   if (nodes.length === 0) return null
   return (
@@ -951,14 +988,35 @@ function ObjectChangeGroup({
       </span>
       <ul className="divide-line mt-1.5 divide-y font-mono text-xs">
         {nodes.map((n) => {
+          // A created/mutated package has no `asMoveObject` — surface its type as
+          // "package" (with its MVR name when one is registered) instead of blank.
+          const isPackage = !!n.outputState?.asMovePackage
           const type = n.outputState?.asMoveObject?.contents?.type.repr
+          const name = mvrNames[n.address]
           return (
             <li key={n.address} className="flex flex-col gap-1 py-2 sm:flex-row sm:items-center sm:gap-3">
               <LinkedHash value={n.address} />
-              {type && (
-                <span className="text-muted min-w-0">
-                  <TypeLink type={type} />
+              {isPackage ? (
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="text-primary">package</span>
+                  {name && (
+                    <a
+                      href={mvrAppUrl(name)}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      title={`${name} · view on Move Registry`}
+                      className="text-muted hover:text-primary truncate transition-colors"
+                    >
+                      {name}
+                    </a>
+                  )}
                 </span>
+              ) : (
+                type && (
+                  <span className="text-muted min-w-0">
+                    <TypeLink type={type} />
+                  </span>
+                )
               )}
             </li>
           )

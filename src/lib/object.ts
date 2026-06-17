@@ -115,6 +115,38 @@ export async function fetchObject(
   return { object: data.object, displayError }
 }
 
+// A package's `linkage` is the authoritative dependency list: every package it
+// links against, with the original (defining) id, the upgraded id actually
+// linked, and that dep's on-chain version. Always includes the Sui framework
+// (0x1/0x2/0x3) — callers filter those out to show only third-party deps.
+const LINKAGE_QUERY = `
+query Linkage($address: SuiAddress!) {
+  object(address: $address) {
+    asMovePackage {
+      linkage { originalId upgradedId version }
+    }
+  }
+}
+`
+
+export interface PackageLink {
+  originalId: string
+  upgradedId: string
+  version: number
+}
+
+/** Fetch a package's dependency linkage (empty when the id isn't a package). */
+export async function fetchPackageLinkage(
+  network: Network,
+  address: string,
+  signal?: AbortSignal,
+): Promise<PackageLink[]> {
+  const { data } = await gqlRequest<{
+    object: { asMovePackage: { linkage: PackageLink[] } | null } | null
+  }>(network, LINKAGE_QUERY, { address }, signal)
+  return data.object?.asMovePackage?.linkage ?? []
+}
+
 // Queried via `address(address:)`, not `object(...).asMoveObject`, so dynamic
 // fields still resolve for an id that doesn't itself resolve to a Move object
 // (e.g. a parent table/bag id that's wrapped or not directly fetchable). The
@@ -281,6 +313,57 @@ export async function fetchStructByPath(
   return data.object?.asMovePackage?.module?.struct ?? null
 }
 
+const FUNCTION_DEF_QUERY = `
+query FunctionDef($package: SuiAddress!, $module: String!, $name: String!) {
+  object(address: $package) {
+    asMovePackage {
+      module(name: $module) {
+        function(name: $name) {
+          name
+          visibility
+          isEntry
+          typeParameters { constraints }
+          parameters { repr }
+          return { repr }
+        }
+      }
+    }
+  }
+}
+`
+
+export interface MoveFunctionDef {
+  name: string
+  visibility: string | null
+  isEntry: boolean | null
+  typeParameters: { constraints: string[] }[]
+  parameters: { repr: string }[]
+  return: { repr: string }[]
+}
+
+/**
+ * Fetch a function's structured signature (visibility, type params, parameter
+ * and return type reprs) from a module. `null` when the package/module has no
+ * function by that name — used to tell a `addr::module::name` path apart from a
+ * struct/enum of the same shape.
+ */
+export async function fetchFunctionSignature(
+  network: Network,
+  packageId: string,
+  module: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<MoveFunctionDef | null> {
+  const { data } = await gqlRequest<{
+    object: {
+      asMovePackage: {
+        module: { function: MoveFunctionDef | null } | null
+      } | null
+    } | null
+  }>(network, FUNCTION_DEF_QUERY, { package: packageId, module, name }, signal)
+  return data.object?.asMovePackage?.module?.function ?? null
+}
+
 const MODULE_QUERY = `
 query Module($address: SuiAddress!, $module: String!) {
   object(address: $address) {
@@ -317,6 +400,85 @@ export async function fetchModule(
     object: { asMovePackage: { module: MoveModule | null } | null } | null
   }>(network, MODULE_QUERY, { address: packageId, module: moduleName }, signal)
   return data.object?.asMovePackage?.module ?? null
+}
+
+const PACKAGE_MODULES_QUERY = `
+query PackageModules($address: SuiAddress!, $after: String) {
+  object(address: $address) {
+    asMovePackage {
+      modules(first: 50, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          name
+          datatypes(first: 50) { nodes { name } }
+        }
+      }
+    }
+  }
+}
+`
+
+export interface PackageModuleInfo {
+  name: string
+  /** Names of the module's datatypes (structs + enums) — for struct search.
+   * Capped at 50 per module by the service (rare to exceed). */
+  datatypes: string[]
+}
+
+interface ModulesPage {
+  mods: PackageModuleInfo[]
+  hasNextPage: boolean
+  endCursor: string | null
+}
+
+/** One page of a package's modules (each with its datatype names). */
+async function fetchModulesPage(
+  network: Network,
+  packageId: string,
+  after: string | null,
+  signal?: AbortSignal,
+): Promise<ModulesPage> {
+  const { data } = await gqlRequest<{
+    object: {
+      asMovePackage: {
+        modules: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null }
+          nodes: { name: string; datatypes: { nodes: { name: string }[] } }[]
+        }
+      } | null
+    } | null
+  }>(network, PACKAGE_MODULES_QUERY, { address: packageId, after }, signal)
+  const conn = data.object?.asMovePackage?.modules
+  if (!conn) return { mods: [], hasNextPage: false, endCursor: null }
+  return {
+    mods: conn.nodes.map((n) => ({
+      name: n.name,
+      datatypes: n.datatypes.nodes.map((d) => d.name),
+    })),
+    hasNextPage: conn.pageInfo.hasNextPage,
+    endCursor: conn.pageInfo.endCursor,
+  }
+}
+
+/**
+ * Every module in a package (paginating past the 50-per-page service cap that
+ * the object query only carries one page of), each with its datatype names.
+ * Lets the module browser list, filter, and struct-search the full set.
+ */
+export async function fetchAllModules(
+  network: Network,
+  packageId: string,
+  signal?: AbortSignal,
+): Promise<PackageModuleInfo[]> {
+  const mods: PackageModuleInfo[] = []
+  let after: string | null = null
+  for (;;) {
+    const page = await fetchModulesPage(network, packageId, after, signal)
+    mods.push(...page.mods)
+    if (!page.hasNextPage) break
+    after = page.endCursor
+  }
+  return mods
 }
 
 const DISPLAY_DEF_QUERY = `

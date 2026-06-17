@@ -1,6 +1,5 @@
 import { Panel, PanelSection } from '@/components/ui/Panel'
-import { Hash } from '@/components/ui/Hash'
-import { TypeLink } from '@/components/ui/links'
+import { LinkedHash, TypeLink } from '@/components/ui/links'
 import { JsonBlock } from '@/components/ui/JsonBlock'
 import { CODE_PRE, DANGER_PRE } from '@/components/ui/codeBlock'
 import { Muted } from '@/components/ui/Field'
@@ -22,6 +21,8 @@ import { DynamicFields } from './DynamicFields'
 import { Txs } from './Txs'
 import { Badge } from '@/components/ui/Badge'
 import { SuinsNames } from './SuinsNames'
+import { MvrChip } from './MvrChip'
+import { UpgradeCapPanel, upgradeCapData } from './UpgradeCapPanel'
 import { fetchDefaultSuinsName, atName } from '@/lib/suins'
 import {
   StructDeclaration,
@@ -33,10 +34,13 @@ import {
 export function ObjectView({
   value,
   alias,
+  mvrName,
 }: {
   value: string
   /** SuiNS name this id was reached by (from a name search), shown as a chip. */
   alias?: string
+  /** MVR name this package was reached by (a forward name search), if any. */
+  mvrName?: string
 }) {
   const { network } = useNetwork()
   const { data, loading, error } = useAsync(
@@ -69,7 +73,12 @@ export function ObjectView({
         label={isPackage ? 'Package' : isAddress ? 'Address' : 'Object'}
         value={value}
         meta={
-          domain ? <Badge kind="suins">{atName(domain)}</Badge> : undefined
+          <span className="flex flex-wrap items-center gap-2">
+            {(isPackage || mvrName) && (
+              <MvrChip packageId={value} knownName={mvrName} />
+            )}
+            {domain && <Badge kind="suins">{atName(domain)}</Badge>}
+          </span>
         }
       />
 
@@ -99,7 +108,7 @@ export function ObjectView({
 
       {obj &&
         (isPackage ? (
-          <PackageBody data={obj} />
+          <PackageBody data={obj} mvrName={mvrName} />
         ) : (
           <MoveObjectBody data={obj} displayError={data?.displayError ?? null} />
         ))}
@@ -119,6 +128,9 @@ function MoveObjectBody({
   const display = move?.contents?.display
   const objectType = move?.contents?.type.repr ?? null
   const signature = move?.contents?.type.signature ?? null
+  // When this object is an `0x2::package::UpgradeCap`, decode its fields so a
+  // dedicated section can show (and link to) the package it governs.
+  const upgradeCap = upgradeCapData(objectType, move?.contents?.json ?? null)
   // When this object is a dynamic-field wrapper (`Field<K, V>`), the Field
   // struct itself is rarely interesting — resolve the inner *value* type (V)
   // instead and show its signature + definition.
@@ -171,7 +183,7 @@ function MoveObjectBody({
       <div
         className={
           showTypeDef
-            ? 'grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start'
+            ? 'grid grid-cols-1 gap-6 lg:grid-cols-2'
             : undefined
         }
       >
@@ -206,8 +218,10 @@ function MoveObjectBody({
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
-        <Panel className="h-fit">
+      {upgradeCap && <UpgradeCapPanel cap={upgradeCap} />}
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Panel>
           <PanelSection label="Fields">
             {move?.contents ? (
               <JsonBlock value={move.contents.json} copy />
@@ -222,7 +236,7 @@ function MoveObjectBody({
 
       {hasDisplay && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <Panel className="h-fit">
+          <Panel>
             <PanelSection label="Display">
               {display?.output != null ? (
                 <pre className={CODE_PRE}>
@@ -247,10 +261,12 @@ function MoveObjectBody({
             </PanelSection>
           </Panel>
 
-          <Panel className="h-fit">
+          <Panel>
             <PanelSection
               label="Display definition"
-              action={def.data ? <Hash value={def.data.address} /> : undefined}
+              action={
+                def.data ? <LinkedHash value={def.data.address} /> : undefined
+              }
             >
               {def.data && def.data.fields.length > 0 ? (
                 <ul className="divide-line border-line divide-y border font-mono text-xs">

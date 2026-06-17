@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { FileCode2 } from 'lucide-react'
+import { FileCode2, Loader2 } from 'lucide-react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { CopyButton } from '@/components/ui/CopyButton'
@@ -9,7 +9,7 @@ import { useSearchHref } from '@/components/ui/links'
 import { cn } from '@/lib/cn'
 import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
-import { fetchModule } from '@/lib/object'
+import { fetchModule, fetchAllModules, type PackageModuleInfo } from '@/lib/object'
 import { escapeRegExp } from '@/lib/format'
 
 /**
@@ -35,10 +35,20 @@ export function PackageModules({
   /** Struct/enum name to highlight in the open module's disassembly. */
   highlightType?: string
 }) {
-  const names = useMemo(
-    () => [...modules].map((m) => m.name).sort((a, b) => a.localeCompare(b)),
-    [modules],
+  const { network } = useNetwork()
+  // Always load the full module set (with each module's datatype names) so the
+  // rail lists every module and the filter can match struct/enum names — the
+  // package object query only carries the first 50 module names.
+  const all = useAsync(
+    (signal) => fetchAllModules(network, packageId, signal),
+    [network, packageId],
   )
+  const mods = useMemo<PackageModuleInfo[]>(() => {
+    const base =
+      all.data ?? modules.map((m) => ({ name: m.name, datatypes: [] as string[] }))
+    return [...base].sort((a, b) => a.name.localeCompare(b.name))
+  }, [all.data, modules])
+  const names = useMemo(() => mods.map((m) => m.name), [mods])
 
   // The module to open by default: the search-provided one if it exists, else
   // the first alphabetically.
@@ -57,33 +67,44 @@ export function PackageModules({
   useEffect(() => setPicked(null), [initial])
   const selected = picked && names.includes(picked) ? picked : initial
 
+  // Search: case-insensitive, accepts `addr::module::Struct` paths (address
+  // segments dropped), and matches a module by its name OR any datatype name.
   const [filter, setFilter] = useState('')
-  const shown = filter
-    ? names.filter((n) => n.toLowerCase().includes(filter.toLowerCase()))
-    : names
+  const tokens = useMemo(() => queryTokens(filter), [filter])
+  const shown = useMemo(
+    () =>
+      tokens.length === 0
+        ? mods.map((m) => m.name)
+        : mods.filter((m) => moduleMatches(m, tokens)).map((m) => m.name),
+    [tokens, mods],
+  )
+
+  const countSuffix = hasNextPage && !all.data ? '+' : ''
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[14rem_1fr] lg:items-start">
-      <Panel className="h-fit">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[14rem_1fr]">
+      <Panel>
         <PanelSection
           label="Modules"
           action={
-            <span className="text-muted font-mono text-xs">
+            <span className="text-muted inline-flex items-center gap-1.5 font-mono text-xs">
+              {all.loading && <Loader2 size={12} className="animate-spin" />}
               {names.length}
-              {hasNextPage ? '+' : ''} · v{version}
+              {countSuffix} · v{version}
             </span>
           }
         >
-          {names.length > 8 && (
+          {names.length > 1 && (
             <input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              placeholder="filter"
+              placeholder="module or struct"
               spellCheck={false}
+              aria-label="filter modules and structs"
               className="input mb-3 !py-1.5 !text-xs"
             />
           )}
-          <ul className="space-y-0.5">
+          <ul className="max-h-[28rem] space-y-0.5 overflow-y-auto">
             {shown.map((name) => {
               const active = name === selected
               return (
@@ -130,6 +151,24 @@ export function PackageModules({
       )}
     </div>
   )
+}
+
+/** Tokenize a module search query: split on `::`/whitespace, lowercase, and
+ * drop address-looking segments so `0x2::coin::Coin` → ['coin', 'coin']. */
+function queryTokens(q: string): string[] {
+  return q
+    .toLowerCase()
+    .split(/::|\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && !/^0x[0-9a-f]*$/.test(s))
+}
+
+/** A module matches when any query token is a substring of its name or of one
+ * of its datatype (struct/enum) names — case-insensitive. */
+function moduleMatches(mod: PackageModuleInfo, tokens: string[]): boolean {
+  const name = mod.name.toLowerCase()
+  const types = mod.datatypes.map((d) => d.toLowerCase())
+  return tokens.some((t) => name.includes(t) || types.some((d) => d.includes(t)))
 }
 
 /** One render row of disassembly: a plain source line, or a function whose

@@ -1,4 +1,4 @@
-import { Fragment } from 'react'
+import { Fragment, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { CopyButton } from './CopyButton'
 import { formatType } from '@/lib/format'
@@ -22,6 +22,29 @@ export function EntityLink({ id }: { id: string }) {
       {id}
     </Link>
   )
+}
+
+// An address, optionally trailed by `::module::name…` Move-path segments — as
+// it appears in free text like an execution-error message.
+const MOVE_PATH_OR_ADDRESS = /0x[0-9a-fA-F]{1,64}(?:::[A-Za-z_][A-Za-z0-9_]*)*/g
+
+/**
+ * Linkify any Move paths (`0x..::mod::fn`) and bare addresses found in plain
+ * text — each to its own page — leaving the rest as text. Used for failure
+ * messages so the offending function/package is clickable.
+ */
+export function linkifyMoveText(text: string): ReactNode[] {
+  const out: ReactNode[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  MOVE_PATH_OR_ADDRESS.lastIndex = 0
+  while ((m = MOVE_PATH_OR_ADDRESS.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index))
+    out.push(<EntityLink key={m.index} id={m[0]} />)
+    last = m.index + m[0].length
+  }
+  if (last < text.length) out.push(text.slice(last))
+  return out
 }
 
 /** A truncated, copyable identifier that links to its own page. */

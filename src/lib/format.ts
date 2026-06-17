@@ -67,6 +67,27 @@ export function formatSui(mist: string | number | bigint | null | undefined): st
   return `${sign}${whole.toLocaleString('en-US')}${frac ? '.' + frac : ''} SUI`
 }
 
+/** Compact count: `942`, `1.2k`, `3.4M`, `1.1B`. For call counts / totals. */
+export function formatCount(n: number): string {
+  const abs = Math.abs(n)
+  if (abs < 1000) return String(n)
+  const units = [
+    { v: 1_000_000_000, s: 'B' },
+    { v: 1_000_000, s: 'M' },
+    { v: 1_000, s: 'k' },
+  ]
+  for (const { v, s } of units) {
+    if (abs >= v) {
+      const scaled = n / v
+      // One decimal under 10 (1.2k), none above (12k) — drop a trailing `.0`.
+      const str = (Math.abs(scaled) < 10 ? scaled.toFixed(1) : Math.round(scaled).toString())
+        .replace(/\.0$/, '')
+      return str + s
+    }
+  }
+  return String(n)
+}
+
 /** Format an ISO timestamp as a readable absolute time; `—` when missing. */
 export function formatTimestamp(iso: string | null | undefined): string {
   if (!iso) return '—'

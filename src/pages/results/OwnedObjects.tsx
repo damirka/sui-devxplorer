@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
-import { ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react'
+import { Loader2, X } from 'lucide-react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
+import { Pager, useCursorPager } from '@/components/ui/Pager'
+import { RowIndex } from '@/components/ui/RowIndex'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LinkedHash } from '@/components/ui/links'
@@ -11,7 +13,12 @@ import { formatType } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import type { Network } from '@/context/network-context'
 
-const PAGE_SIZES = [10, 25, 50]
+/** Collapse whitespace and clamp to `max` chars with an ellipsis — keeps a
+ * long display description from dominating its row (full text stays in `title`). */
+function clampText(s: string, max: number): string {
+  const t = s.replace(/\s+/g, ' ').trim()
+  return t.length > max ? t.slice(0, max - 1).trimEnd() + '…' : t
+}
 
 export function OwnedObjects({ id }: { id: string }) {
   const { network } = useNetwork()
@@ -21,7 +28,7 @@ export function OwnedObjects({ id }: { id: string }) {
   useEffect(() => setTypeFilter(null), [id, network])
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[22rem_1fr] lg:items-start">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[22rem_1fr]">
       <TypesOwned
         network={network}
         id={id}
@@ -51,37 +58,19 @@ function OwnedList({
   typeFilter: string | null
   onClearFilter: () => void
 }) {
-  const [pageSize, setPageSize] = useState(10)
-  // cursors[i] is the `after` used to fetch page i; cursors[0] is null.
-  const [cursors, setCursors] = useState<(string | null)[]>([null])
-  const [pageIndex, setPageIndex] = useState(0)
-
-  // Reset paging whenever the owner, network, page size, or filter changes.
-  useEffect(() => {
-    setCursors([null])
-    setPageIndex(0)
-  }, [id, network, pageSize, typeFilter])
-
-  const after = cursors[pageIndex] ?? null
+  const pager = useCursorPager(`${network}|${id}|${typeFilter ?? ''}`)
   const { data, loading, error } = useAsync(
     (signal) =>
       typeFilter
         ? fetchOwnedPage(
             network,
             id,
-            { first: pageSize, after, type: typeFilter, display: true },
+            { first: pager.pageSize, after: pager.after, type: typeFilter, display: true },
             signal,
           )
         : Promise.resolve(null),
-    [network, id, pageSize, after, typeFilter],
+    [network, id, pager.pageSize, pager.after, typeFilter],
   )
-
-  function nextPage() {
-    if (!data?.hasNextPage) return
-    const end = data.endCursor
-    setCursors((prev) => [...prev.slice(0, pageIndex + 1), end])
-    setPageIndex((i) => i + 1)
-  }
 
   return (
     <Panel>
@@ -89,43 +78,15 @@ function OwnedList({
         label="Owned objects"
         action={
           typeFilter ? (
-            <div className="flex items-center gap-3">
-              <select
-                value={pageSize}
-                onChange={(e) => setPageSize(Number(e.target.value))}
-                className="bg-surface border-line text-muted border px-2 py-1 font-mono text-xs"
-                aria-label="objects per page"
-              >
-                {PAGE_SIZES.map((n) => (
-                  <option key={n} value={n}>
-                    {n} / page
-                  </option>
-                ))}
-              </select>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon"
-                  onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
-                  disabled={pageIndex === 0}
-                  aria-label="previous page"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <span className="text-muted w-14 text-center font-mono text-xs">
-                  page {pageIndex + 1}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon"
-                  onClick={nextPage}
-                  disabled={!data?.hasNextPage}
-                  aria-label="next page"
-                >
-                  <ChevronRight size={14} />
-                </button>
-              </div>
-            </div>
+            <Pager
+              pageIndex={pager.pageIndex}
+              pageSize={pager.pageSize}
+              onPageSize={pager.setPageSize}
+              hasNext={!!data?.hasNextPage}
+              onPrev={pager.prev}
+              onNext={() => pager.next(data?.endCursor ?? null)}
+              label="objects"
+            />
           ) : undefined
         }
       >
@@ -153,12 +114,10 @@ function OwnedList({
                 {error.message}
               </span>
             ) : data && data.objects.length > 0 ? (
-              <ul className="divide-line divide-y font-mono text-xs">
+              <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
                 {data.objects.map((o, i) => (
                   <li key={o.address} className="flex items-center gap-3 py-2.5">
-                    <span className="menu-num shrink-0 tabular-nums">
-                      {String(i + 1).padStart(2, '0')}
-                    </span>
+                    <RowIndex n={i + 1} />
                     <LinkedHash value={o.address} />
                     {(o.name || o.description) && (
                       <span
@@ -172,7 +131,9 @@ function OwnedList({
                           <span className="text-muted"> · </span>
                         )}
                         {o.description && (
-                          <span className="text-muted">{o.description}</span>
+                          <span className="text-muted">
+                            {clampText(o.description, 48)}
+                          </span>
                         )}
                       </span>
                     )}

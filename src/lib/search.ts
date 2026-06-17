@@ -13,6 +13,7 @@ export type SearchKind =
   | 'transaction'
   | 'package'
   | 'suins'
+  | 'mvr'
   | 'unknown'
 
 export interface SearchResultKind {
@@ -65,6 +66,13 @@ export function detectSearchKind(input: string): SearchResultKind {
   const trimmed = input.trim()
 
   if (!trimmed) return { kind: 'unknown', value: '', raw }
+
+  // Move Registry name: `@namespace/app` (optionally a `/version` suffix). The
+  // `/` is what distinguishes it from a SuiNS `@handle`. Resolved to a package
+  // id at view time.
+  if (trimmed.startsWith('@') && trimmed.includes('/')) {
+    return { kind: 'mvr', value: trimmed, raw }
+  }
 
   // SuiNS name: `@handle` or `handle.sui`. Resolved to an address at view time.
   if (trimmed.startsWith('@') || /\.sui$/i.test(trimmed)) {

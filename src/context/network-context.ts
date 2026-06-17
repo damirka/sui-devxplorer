@@ -1,6 +1,6 @@
 import { createContext } from 'react'
 
-export const NETWORKS = ['mainnet', 'testnet', 'devnet', 'localnet'] as const
+export const NETWORKS = ['mainnet', 'testnet', 'devnet'] as const
 export type Network = (typeof NETWORKS)[number]
 
 export const DEFAULT_NETWORK: Network = 'mainnet'

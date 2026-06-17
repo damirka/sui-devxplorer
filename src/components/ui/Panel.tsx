@@ -23,7 +23,7 @@ interface PanelSectionProps {
 }
 
 /** Zero-pad a numeric section index to the Sifu menu `01`/`02` form. */
-function fmtIndex(index: number | string): string {
+export function fmtIndex(index: number | string): string {
   return typeof index === 'number' ? String(index).padStart(2, '0') : index
 }
 

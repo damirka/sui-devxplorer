@@ -33,6 +33,7 @@ src/
   styles/index.css        THE design system (see below)
   lib/
     search.ts             detectSearchKind(), normalizeSuiId(), truncateMiddle()  ← pure, test here
+    mvr.ts                Move Registry REST client (names ↔ packages, versions) — not GraphQL
     cn.ts                 clsx + tailwind-merge
   theme/                  data-theme on <html>; ThemeProvider + useTheme (split for fast-refresh)
   context/                NetworkProvider — network lives in ?network=, seeded from localStorage
@@ -41,9 +42,10 @@ src/
     layout/               AppShell (Header + <main>), Header, Logo
   pages/
     Home.tsx, Hero.tsx
-    results/              ObjectView, TransactionView, PackageView, SuinsView, NotFound
+    results/              ObjectView, TransactionView, PackageView, SuinsView, MvrView, NotFound
                           + ResultRouter (dispatch), ResultHeader, ObjectOverview,
-                            PackageBody/PackageModules, moveType, SuinsNames, OwnedObjects,
+                            PackageBody/PackageModules/PackageDependencies/PackageDependents,
+                            moveType, SuinsNames, MvrPanel/MvrChip, OwnedObjects,
                             DynamicFields, Txs
 ```
 
@@ -89,6 +91,35 @@ hex colors in TSX — every colour goes through a token. Theme by setting
   ids with `normalizeSuiId`.
 - **Keyboard:** `/` and `Tab` focus the search globally (see `SearchBar`); the
   hero caret is a custom overlay because native carets can't be thickened.
+
+## Move Registry (MVR): a second data source
+
+GraphQL isn't the only backend-free source. `lib/mvr.ts` talks to the **Move
+Registry REST API** (`https://<network>.mvr.mystenlabs.com`, mainnet + testnet
+only — no devnet) to map packages ↔ human-readable names:
+
+- **reverse** (`/v1/reverse-resolution/bulk`) — a package id → its `@ns/app`
+  name. Works for *any* version in the upgrade chain. `MvrPanel` (top of
+  `PackageBody`) does this for every package view; renders nothing when unnamed.
+- **forward** (`/v1/resolution/bulk`) — `@ns/app` (or versioned `@ns/app/3`) →
+  package id. `detectSearchKind` classifies an `@`-token *containing `/`* as
+  `mvr` (a slash-free `@handle` stays SuiNS); `MvrView` resolves it and delegates
+  to `ObjectView`, the same way `SuinsView` does.
+- **metadata + versions** (`/v1/names/{name}`) — description/links + the latest
+  version number; `MvrPanel` then bulk-resolves `@name/1..N` for the full version
+  list (each linked to its package page). **Bulk endpoints cap at 50 names** — chunk.
+- **dependencies** — `PackageDependencies` reads a package's on-chain `linkage`
+  (GraphQL, `fetchPackageLinkage`), drops the framework (0x1/0x2/0x3/0xb), and
+  bulk-reverse-resolves the rest (`reverseResolveMvrBulk`) to show an MVR name
+  where one exists (best-effort — most deps have no reverse mapping) + the
+  on-chain version + a link to the exact linked id.
+- **dependents** — `PackageDependents` reads `/package-address/{id}/dependents`
+  (`fetchMvrDependents`), ordered by call volume; cursor-paginated via the shared
+  `useCursorPager`/`Pager` (MVR's base64 `next_cursor` → the pager's `endCursor`,
+  `limit` ≤ 50). Each page's ids are bulk-reverse-resolved for names. MVR-only,
+  so it renders nothing on devnet.
+
+CORS is open (`*`). All of MVR sits behind `mvrSupported(network)`.
 
 ## The SearchBar overlay (so you don't "fix" it by accident)
 

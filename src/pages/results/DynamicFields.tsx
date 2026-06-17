@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { Panel, PanelSection } from '@/components/ui/Panel'
+import { Pager, useCursorPager } from '@/components/ui/Pager'
+import { RowIndex } from '@/components/ui/RowIndex'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { HoverCard } from '@/components/ui/HoverCard'
 import { useSearchHref } from '@/components/ui/links'
@@ -14,8 +15,6 @@ import {
   fetchObjectTypes,
   type DynamicFieldNode,
 } from '@/lib/object'
-
-const PAGE_SIZES = [10, 25, 50]
 
 // A derived object is stored under a dynamic field keyed by
 // `0x2::derived_object::Claimed { pos0: ID }` — `pos0` is the derived object's
@@ -58,87 +57,49 @@ export function DynamicFields({
 }) {
   const { network } = useNetwork()
   const searchHref = useSearchHref()
-  const [pageSize, setPageSize] = useState(10)
-  const [cursors, setCursors] = useState<(string | null)[]>([null])
-  const [pageIndex, setPageIndex] = useState(0)
-
-  useEffect(() => {
-    setCursors([null])
-    setPageIndex(0)
-  }, [id, network, pageSize])
-
-  const after = cursors[pageIndex] ?? null
+  const pager = useCursorPager(`${network}|${id}`)
   const { data, loading, error } = useAsync(
-    (signal) => fetchDynamicFields(network, id, { first: pageSize, after }, signal),
-    [network, id, pageSize, after],
+    (signal) =>
+      fetchDynamicFields(network, id, { first: pager.pageSize, after: pager.after }, signal),
+    [network, id, pager.pageSize, pager.after],
   )
 
   // Derived objects live at a separate id; fetch their concrete types in one
   // batched request so each row can show what kind of object it points at.
-  const derivedIds = (data?.fields ?? [])
-    .map((df) => rowFor(df).derived)
-    .filter((v): v is string => v != null)
+  const derivedIds = useMemo(
+    () =>
+      (data?.fields ?? [])
+        .map((df) => rowFor(df).derived)
+        .filter((v): v is string => v != null),
+    [data],
+  )
   const { data: types } = useAsync(
     (signal) => fetchObjectTypes(network, derivedIds, signal),
-    [network, derivedIds.join(',')],
+    [network, derivedIds],
   )
 
-  function nextPage() {
-    if (!data?.hasNextPage) return
-    setCursors((prev) => [...prev.slice(0, pageIndex + 1), data.endCursor])
-    setPageIndex((i) => i + 1)
-  }
-
   // Hide pagination entirely when there's a single page of results.
-  const paged = pageIndex > 0 || !!data?.hasNextPage
+  const paged = pager.pageIndex > 0 || !!data?.hasNextPage
 
   if (hideWhenEmpty && !loading && !error && data && data.fields.length === 0) {
     return null
   }
 
   return (
-    <Panel className="h-fit">
+    <Panel>
       <PanelSection
         label="Dynamic fields"
         action={
           paged ? (
-            <div className="flex items-center gap-3">
-              <select
-                value={pageSize}
-                onChange={(e) => setPageSize(Number(e.target.value))}
-                className="bg-surface border-line text-muted border px-2 py-1 font-mono text-xs"
-                aria-label="dynamic fields per page"
-              >
-                {PAGE_SIZES.map((n) => (
-                  <option key={n} value={n}>
-                    {n} / page
-                  </option>
-                ))}
-              </select>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon"
-                  onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
-                  disabled={pageIndex === 0}
-                  aria-label="previous page"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <span className="text-muted w-14 text-center font-mono text-xs">
-                  page {pageIndex + 1}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon"
-                  onClick={nextPage}
-                  disabled={!data?.hasNextPage}
-                  aria-label="next page"
-                >
-                  <ChevronRight size={14} />
-                </button>
-              </div>
-            </div>
+            <Pager
+              pageIndex={pager.pageIndex}
+              pageSize={pager.pageSize}
+              onPageSize={pager.setPageSize}
+              hasNext={!!data?.hasNextPage}
+              onPrev={pager.prev}
+              onNext={() => pager.next(data?.endCursor ?? null)}
+              label="dynamic fields"
+            />
           ) : undefined
         }
       >
@@ -164,9 +125,7 @@ export function DynamicFields({
                     title={`open ${target}`}
                     className="hover:bg-surface-2 group -mx-2 flex items-center gap-2 px-2 py-2.5 transition-colors"
                   >
-                    <span className="menu-num shrink-0 tabular-nums">
-                      {String(i + 1).padStart(2, '0')}
-                    </span>
+                    <RowIndex n={i + 1} />
                     {derived ? (
                       <>
                         <span className="border-line text-muted shrink-0 border px-1.5 py-0.5 text-[0.625rem] tracking-wide uppercase">
