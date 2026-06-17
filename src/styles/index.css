@@ -1,0 +1,368 @@
+@import 'tailwindcss';
+
+/* ───────────────────────────────────────────────────────────────────
+   DevXplorer design tokens
+   Matrix phosphor green + Sifu brutalist structure · functional & dry.
+   - One signal hue: phosphor green (focus, type, active, links).
+   - One alarm hue: red (failures + errors only — never decoration).
+   - Sharp edges everywhere (no radius). Mono-forward. Indexed menu rows.
+   Static palette lives in @theme; runtime-themeable semantics in CSS vars.
+   ─────────────────────────────────────────────────────────────────── */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Fira Code', monospace;
+
+  /* Phosphor scale (Matrix green) */
+  --color-phosphor: #00ff41;
+  --color-phosphor-dim: #14b84a;
+
+  --color-ink-950: #010402;
+  --color-ink-900: #020604;
+  --color-ink-800: #060d0a;
+  --color-ink-700: #0b1610;
+  --color-ink-600: #17271e;
+
+  /* Brutalist: no rounding anywhere. */
+  --radius-card: 0;
+}
+
+/* Map runtime semantic vars to Tailwind utilities so `bg-surface`,
+   `text-muted`, `border-line`, `text-primary`, etc. follow the theme. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--text-muted);
+  --color-primary: var(--primary);
+  --color-secondary: var(--secondary);
+  --color-danger: var(--danger);
+}
+
+@layer base {
+  /* Dark (default) — phosphor on near-black */
+  :root,
+  :root[data-theme='dark'] {
+    --bg: #020604;
+    --surface: #060d0a;
+    --surface-2: #0b1610;
+    --border: #17271e;
+    --text: #cfe6d8;
+    --text-muted: #5f7a6b;
+    --primary: #00ff41; /* phosphor green — the one signal hue */
+    --secondary: #5ef2a0; /* success / confirm green (ok, copied) */
+    --danger: #ff3b3b; /* alarm red — failures + errors only */
+    --glow: 0 255 65; /* primary as rgb() for rings / selection */
+
+    color-scheme: dark;
+  }
+
+  /* Light — inverted tokens, phosphor darkened for contrast on paper */
+  :root[data-theme='light'] {
+    --bg: #eef2ee;
+    --surface: #ffffff;
+    --surface-2: #e2eae3;
+    --border: #c5d2c8;
+    --text: #0a140e;
+    --text-muted: #51665a;
+    --primary: #04a544;
+    --secondary: #0a7a3c;
+    --danger: #d61f1f;
+    --glow: 4 165 68;
+
+    color-scheme: light;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Mono-forward: the whole surface reads as a terminal. */
+  body {
+    margin: 0;
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: rgb(var(--glow) / 0.28);
+    color: var(--text);
+  }
+
+  /* Square, phosphor-on-hover scrollbar */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--surface-2);
+    border: 2px solid var(--bg);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--primary);
+  }
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Component classes — the design system. Markup stays lean; these are
+   shared so Tailwind can dedupe them across the app. Sharp, mono, dense.
+   ─────────────────────────────────────────────────────────────────── */
+@layer components {
+  .panel {
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+  }
+
+  /* Sifu/terminal section header pieces: index + tracked uppercase label.
+     Pair `.panel-index` + `.panel-label` + a flexing `.rule` for the
+     "01  LABEL ────────────────" menu masthead. */
+  .panel-label {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .panel-index {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--primary);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Horizontal rule that eats the remaining width of a flex header. */
+  .rule {
+    height: 1px;
+    flex: 1 1 0%;
+    background-color: var(--border);
+  }
+
+  /* Indexed menu row (the Sifu list primitive). */
+  .menu-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    border-bottom: 1px solid var(--border);
+    transition:
+      background-color 0.12s ease,
+      color 0.12s ease;
+  }
+  .menu-row:last-child {
+    border-bottom: 0;
+  }
+  .menu-row:hover {
+    background-color: var(--surface-2);
+  }
+  .menu-num {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Buttons (sharp) */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0;
+    padding: 0.5rem 0.9rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    border: 1px solid transparent;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      box-shadow 0.15s ease,
+      color 0.15s ease,
+      transform 0.05s ease;
+  }
+  .btn:active {
+    transform: translateY(1px);
+  }
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background-color: var(--primary);
+    color: #02140a;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .btn-primary:hover {
+    filter: brightness(1.1);
+  }
+  .btn-primary:focus-visible {
+    outline: 2px solid rgb(var(--glow) / 0.5);
+    outline-offset: 2px;
+  }
+
+  .btn-ghost {
+    background-color: transparent;
+    border-color: var(--border);
+    color: var(--text);
+  }
+  .btn-ghost:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background-color: var(--surface-2);
+  }
+
+  /* Icon-only square button */
+  .btn-icon {
+    padding: 0.5rem;
+    aspect-ratio: 1;
+  }
+
+  /* Text input (sharp, phosphor focus) */
+  .input {
+    width: 100%;
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    padding: 0.7rem 0.85rem;
+    outline: none;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.2s ease;
+  }
+  .input::placeholder {
+    color: var(--text-muted);
+  }
+  .input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgb(var(--glow) / 0.18);
+  }
+
+  /* Type / kind tag — sharp, uppercase, uniform phosphor (label is the
+     differentiator, not the hue). Add `.badge-danger` for failure tags. */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.45rem;
+    border-radius: 0;
+    color: var(--primary);
+    border: 1px solid color-mix(in oklab, var(--primary) 45%, transparent);
+    background-color: color-mix(in oklab, var(--primary) 10%, transparent);
+  }
+  .badge-danger {
+    color: var(--danger);
+    border-color: color-mix(in oklab, var(--danger) 45%, transparent);
+    background-color: color-mix(in oklab, var(--danger) 10%, transparent);
+  }
+  .badge-muted {
+    color: var(--text-muted);
+    border-color: var(--border);
+    background-color: transparent;
+  }
+
+  /* Keyboard hint */
+  .kbd {
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    line-height: 1;
+    padding: 0.25rem 0.4rem;
+    border-radius: 0;
+    border: 1px solid var(--border);
+    background-color: var(--surface-2);
+    color: var(--text-muted);
+  }
+
+  /* Monospace hash display */
+  .hash {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: var(--text);
+  }
+
+  /* Loading shimmer */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: var(--surface-2);
+    border-radius: 0;
+  }
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(var(--glow) / 0.1),
+      transparent
+    );
+    animation: shimmer 1.6s infinite;
+  }
+
+  /* Hard elevation for popovers — a flat drop, no neon bloom. */
+  .glow {
+    box-shadow: 0 12px 28px -10px rgb(0 0 0 / 0.75);
+  }
+
+  /* Chunky terminal block caret (overlaid; native caret can't be thickened) */
+  .term-caret {
+    display: inline-block;
+    width: 0.6ch;
+    height: 1.05em;
+    flex-shrink: 0;
+    background-color: var(--primary);
+  }
+  .term-caret-blink {
+    animation: blink 1.06s steps(1) infinite;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
