@@ -13,6 +13,7 @@ import { StructDeclaration } from './moveType'
 import { OwnedObjects } from './OwnedObjects'
 import { Txs } from './Txs'
 import { MvrPanel } from './MvrPanel'
+import { PackageUpgradeCap } from './PackageUpgradeCap'
 import { PackageDependencies } from './PackageDependencies'
 import { PackageDependents } from './PackageDependents'
 import { FunctionDefinitionPanel } from './FunctionDefinition'
@@ -43,6 +44,8 @@ export function PackageBody({
       <MvrPanel packageId={data.address} name={mvrName} />
 
       <ObjectOverview data={data} isPackage />
+
+      <PackageUpgradeCap packageId={data.address} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
         <PackageDependencies packageId={data.address} />

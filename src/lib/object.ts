@@ -5,6 +5,7 @@
  * fragments on the `Owner` union and `DynamicFieldValue`.
  */
 import { gqlRequest } from './graphql'
+import { isUpgradeCapType, upgradeCapData } from './upgradeCap'
 import type { Network } from '@/context/network-context'
 
 const OBJECT_QUERY = `
@@ -638,6 +639,265 @@ export async function fetchOwnedPage(
     }),
     hasNextPage: conn.pageInfo.hasNextPage,
     endCursor: conn.pageInfo.endCursor,
+  }
+}
+
+// The UpgradeCaps an owner holds. Filtered server-side by the cap's type
+// (`0x2::package::UpgradeCap` — the type filter resolves it to its defining id,
+// `0x2`). Pulls each cap's `contents.json` so the caller can read the governed
+// package / version / policy without a follow-up fetch.
+const OWNED_UPGRADE_CAPS_QUERY = `
+query OwnedUpgradeCaps($address: SuiAddress!, $first: Int, $after: String) {
+  address(address: $address) {
+    objects(first: $first, after: $after, filter: { type: "0x2::package::UpgradeCap" }) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        address
+        contents { type { repr } json }
+      }
+    }
+  }
+}
+`
+
+export interface OwnedUpgradeCapNode {
+  /** The UpgradeCap object's own id. */
+  address: string
+  /** Its concrete type repr (for the caller to confirm/parse). */
+  type: string | null
+  /** Flattened Move contents (`{ id, package, version, policy }`). */
+  json: unknown
+}
+
+export interface OwnedUpgradeCapsPage {
+  caps: OwnedUpgradeCapNode[]
+  hasNextPage: boolean
+  endCursor: string | null
+}
+
+/**
+ * One page of the `0x2::package::UpgradeCap` objects owned by an address (or by
+ * an object — ownership is by address, so an object id works as the owner too).
+ * `first` is capped at 50 by the service. Empty page when the owner holds none.
+ */
+export async function fetchOwnedUpgradeCaps(
+  network: Network,
+  ownerId: string,
+  opts: { first: number; after?: string | null },
+  signal?: AbortSignal,
+): Promise<OwnedUpgradeCapsPage> {
+  const { data } = await gqlRequest<{
+    address: {
+      objects: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null }
+        nodes: {
+          address: string
+          contents: { type: { repr: string }; json: unknown } | null
+        }[]
+      }
+    } | null
+  }>(
+    network,
+    OWNED_UPGRADE_CAPS_QUERY,
+    { address: ownerId, first: opts.first, after: opts.after ?? null },
+    signal,
+  )
+  const conn = data.address?.objects
+  if (!conn) return { caps: [], hasNextPage: false, endCursor: null }
+  return {
+    caps: conn.nodes.map((n) => ({
+      address: n.address,
+      type: n.contents?.type.repr ?? null,
+      json: n.contents?.json ?? null,
+    })),
+    hasNextPage: conn.pageInfo.hasNextPage,
+    endCursor: conn.pageInfo.endCursor,
+  }
+}
+
+// Finding the UpgradeCap that governs a package has no direct GraphQL filter
+// (there's no "objects whose `package` field == X" query). The reliable route
+// is the package's publish transaction (its v1 `previousTransaction`), which
+// created the cap — and the cap's object id is stable across every later
+// upgrade. Three steps: v1 publish tx → the cap created in it → the cap's
+// *current* owner/state (it may since have been transferred or burned).
+
+const PACKAGE_PUBLISH_QUERY = `
+query PackagePublish($address: SuiAddress!) {
+  object(address: $address) {
+    asMovePackage {
+      packageAt(version: 1) {
+        address
+        previousTransaction { digest }
+      }
+    }
+  }
+}
+`
+
+const PUBLISH_OBJECT_CHANGES_QUERY = `
+query PublishObjectChanges($digest: String!, $after: String) {
+  transaction(digest: $digest) {
+    effects {
+      objectChanges(first: 50, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          address
+          outputState {
+            asMoveObject { contents { type { repr } json } }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+const UPGRADE_CAP_STATE_QUERY = `
+query UpgradeCapState($address: SuiAddress!) {
+  object(address: $address) {
+    owner {
+      __typename
+      ... on AddressOwner { owner: address { address } }
+      ... on ObjectOwner { owner: address { address } }
+      ... on ConsensusAddressOwner { startVersion owner: address { address } }
+      ... on Shared { initialSharedVersion }
+    }
+    asMoveObject { contents { type { repr } json } }
+  }
+}
+`
+
+/** One page of the UpgradeCaps created in a publish tx (each with the `package`
+ * id it was minted for, so the caller can match the right one). */
+async function fetchPublishCaps(
+  network: Network,
+  digest: string,
+  after: string | null,
+  signal?: AbortSignal,
+): Promise<{
+  caps: { address: string; pkg: string | null }[]
+  hasNextPage: boolean
+  endCursor: string | null
+}> {
+  const { data } = await gqlRequest<{
+    transaction: {
+      effects: {
+        objectChanges: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null }
+          nodes: {
+            address: string
+            outputState: {
+              asMoveObject: {
+                contents: { type: { repr: string }; json: unknown } | null
+              } | null
+            } | null
+          }[]
+        }
+      }
+    } | null
+  }>(network, PUBLISH_OBJECT_CHANGES_QUERY, { digest, after }, signal)
+  const conn = data.transaction?.effects.objectChanges
+  if (!conn) return { caps: [], hasNextPage: false, endCursor: null }
+  const caps = conn.nodes.flatMap((n) => {
+    const contents = n.outputState?.asMoveObject?.contents
+    if (!contents || !isUpgradeCapType(contents.type.repr)) return []
+    const pkg = (contents.json as { package?: string } | null)?.package ?? null
+    return [{ address: n.address, pkg }]
+  })
+  return {
+    caps,
+    hasNextPage: conn.pageInfo.hasNextPage,
+    endCursor: conn.pageInfo.endCursor,
+  }
+}
+
+export interface PackageUpgradeCap {
+  /** The UpgradeCap object id — stable across the package's whole upgrade chain. */
+  capId: string
+  /** False when the cap has been destroyed → the package is now immutable. */
+  exists: boolean
+  /** The cap's current owner (when it still exists). */
+  owner: ObjectOwner | null
+  /** The package version the cap is currently at. */
+  version: string | null
+  /** The current upgrade-policy byte. */
+  policy: number | null
+}
+
+/**
+ * The UpgradeCap governing a package, resolved via its publish transaction (see
+ * the note above). `null` when the package has no cap to find — a system /
+ * genesis package (no normal publish tx), or a publish whose cap we can't match.
+ * When the cap was burned since publish, `exists` is false (owner/version null).
+ */
+export async function fetchPackageUpgradeCap(
+  network: Network,
+  packageId: string,
+  signal?: AbortSignal,
+): Promise<PackageUpgradeCap | null> {
+  // 1. The package's v1 (original) id + the tx that published it.
+  const { data: pub } = await gqlRequest<{
+    object: {
+      asMovePackage: {
+        packageAt: {
+          address: string
+          previousTransaction: { digest: string } | null
+        } | null
+      } | null
+    } | null
+  }>(network, PACKAGE_PUBLISH_QUERY, { address: packageId }, signal)
+  const v1 = pub.object?.asMovePackage?.packageAt
+  const originalId = v1?.address
+  const digest = v1?.previousTransaction?.digest
+  if (!originalId || !digest) return null
+
+  // 2. The UpgradeCap created in that publish tx. A publish PTB can publish
+  //    several packages (each with its own cap), so match the one whose
+  //    `package` field is this package's original id; fall back to the sole cap
+  //    when there's exactly one and the field can't be read.
+  const candidates: string[] = []
+  let matched: string | null = null
+  let after: string | null = null
+  for (;;) {
+    const page = await fetchPublishCaps(network, digest, after, signal)
+    for (const c of page.caps) {
+      if (c.pkg === originalId) {
+        matched = c.address
+        break
+      }
+      candidates.push(c.address)
+    }
+    if (matched || !page.hasNextPage) break
+    after = page.endCursor
+  }
+  const capId = matched ?? (candidates.length === 1 ? candidates[0] : null)
+  if (!capId) return null
+
+  // 3. The cap's *current* state — owner (it's often transferred away from the
+  //    publisher) and version/policy, or non-existence if it was burned.
+  const { data: state } = await gqlRequest<{
+    object: {
+      owner: ObjectOwner | null
+      asMoveObject: {
+        contents: { type: { repr: string }; json: unknown } | null
+      } | null
+    } | null
+  }>(network, UPGRADE_CAP_STATE_QUERY, { address: capId }, signal)
+  const obj = state.object
+  if (!obj) {
+    return { capId, exists: false, owner: null, version: null, policy: null }
+  }
+  const cap = upgradeCapData(
+    obj.asMoveObject?.contents?.type.repr ?? null,
+    obj.asMoveObject?.contents?.json ?? null,
+  )
+  return {
+    capId,
+    exists: true,
+    owner: obj.owner,
+    version: cap?.version ?? null,
+    policy: cap?.policy ?? null,
   }
 }
 

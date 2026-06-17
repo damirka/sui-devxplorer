@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/Badge'
 import { SuinsNames } from './SuinsNames'
 import { MvrChip } from './MvrChip'
 import { UpgradeCapPanel, upgradeCapData } from './UpgradeCapPanel'
+import { OwnedUpgradeCaps } from './OwnedUpgradeCaps'
 import { fetchDefaultSuinsName, atName } from '@/lib/suins'
 import {
   StructDeclaration,
@@ -101,6 +102,7 @@ export function ObjectView({
               still be a parent holding dynamic fields (e.g. a table/bag) — those
               are the important content, so surface them when present. */}
           <DynamicFields id={value} hideWhenEmpty />
+          <OwnedUpgradeCaps id={value} hideWhenEmpty />
           <OwnedObjects id={value} />
           <Txs id={value} relation="sent" label="Transactions sent" />
         </div>

@@ -8,10 +8,16 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { LinkedHash } from '@/components/ui/links'
 import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
-import { fetchOwnedPage } from '@/lib/object'
+import { fetchOwnedPage, fetchOwnedUpgradeCaps } from '@/lib/object'
+import { isUpgradeCapType } from '@/lib/upgradeCap'
 import { formatType } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import type { Network } from '@/context/network-context'
+import {
+  toCapRows,
+  useUpgradeCapPackageNames,
+  UpgradeCapRow,
+} from './OwnedUpgradeCaps'
 
 /** Collapse whitespace and clamp to `max` chars with an ellipsis — keeps a
  * long display description from dominating its row (full text stays in `title`). */
@@ -59,9 +65,14 @@ function OwnedList({
   onClearFilter: () => void
 }) {
   const pager = useCursorPager(`${network}|${id}|${typeFilter ?? ''}`)
-  const { data, loading, error } = useAsync(
+  // UpgradeCaps get the richer cap formatting (governed package + policy) used
+  // by the "UpgradeCaps held" panel — which needs each object's `contents.json`,
+  // a different fetch than the plain owned-objects list.
+  const caps = !!typeFilter && isUpgradeCapType(typeFilter)
+
+  const page = useAsync(
     (signal) =>
-      typeFilter
+      typeFilter && !caps
         ? fetchOwnedPage(
             network,
             id,
@@ -69,8 +80,28 @@ function OwnedList({
             signal,
           )
         : Promise.resolve(null),
-    [network, id, pager.pageSize, pager.after, typeFilter],
+    [network, id, pager.pageSize, pager.after, typeFilter, caps],
   )
+  const capPage = useAsync(
+    (signal) =>
+      caps
+        ? fetchOwnedUpgradeCaps(
+            network,
+            id,
+            { first: pager.pageSize, after: pager.after },
+            signal,
+          )
+        : Promise.resolve(null),
+    [network, id, pager.pageSize, pager.after, caps],
+  )
+
+  const capRows = toCapRows(capPage.data?.caps ?? [])
+  const capNames = useUpgradeCapPackageNames(network, capRows)
+
+  const active = caps ? capPage : page
+  const hasNext = caps ? capPage.data?.hasNextPage : page.data?.hasNextPage
+  const endCursor =
+    (caps ? capPage.data?.endCursor : page.data?.endCursor) ?? null
 
   return (
     <Panel>
@@ -82,9 +113,9 @@ function OwnedList({
               pageIndex={pager.pageIndex}
               pageSize={pager.pageSize}
               onPageSize={pager.setPageSize}
-              hasNext={!!data?.hasNextPage}
+              hasNext={!!hasNext}
               onPrev={pager.prev}
-              onNext={() => pager.next(data?.endCursor ?? null)}
+              onNext={() => pager.next(endCursor)}
               label="objects"
             />
           ) : undefined
@@ -107,15 +138,32 @@ function OwnedList({
               <X size={12} className="shrink-0" />
             </button>
 
-            {loading ? (
+            {active.loading ? (
               <SkeletonLines count={5} />
-            ) : error ? (
+            ) : active.error ? (
               <span className="text-danger font-mono text-xs">
-                {error.message}
+                {active.error.message}
               </span>
-            ) : data && data.objects.length > 0 ? (
+            ) : caps ? (
+              capRows.length > 0 ? (
+                <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
+                  {capRows.map((r, i) => (
+                    <UpgradeCapRow
+                      key={r.id}
+                      row={r}
+                      mvrName={r.package ? capNames[r.package] : undefined}
+                      n={i + 1}
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <span className="text-muted text-sm">
+                  no owned objects of this type.
+                </span>
+              )
+            ) : page.data && page.data.objects.length > 0 ? (
               <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
-                {data.objects.map((o, i) => (
+                {page.data.objects.map((o, i) => (
                   <li key={o.address} className="flex items-center gap-3 py-2.5">
                     <RowIndex n={i + 1} />
                     <LinkedHash value={o.address} />
