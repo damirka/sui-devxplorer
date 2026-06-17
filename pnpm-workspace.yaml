@@ -1,5 +1,12 @@
+# Single-package repo — no `packages:` needed; this file only carries pnpm
+# settings. Approve esbuild's install script (Vite's bundler depends on it).
+# Without approval, pnpm v10+ leaves the build script un-run and, in CI
+# (Vercel), install exits non-zero with ERR_PNPM_IGNORED_BUILDS.
+#
+# `allowBuilds` is the pnpm v11 form; `onlyBuiltDependencies` is the v10 form —
+# both kept so the build is robust to whichever pnpm Vercel resolves.
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
 onlyBuiltDependencies:
   - esbuild
 verifyDepsBeforeRun: false
