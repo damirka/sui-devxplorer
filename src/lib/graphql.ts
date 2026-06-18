@@ -3,15 +3,31 @@
  * directly from the public GraphQL endpoint for the active network. No client
  * library, no cache layer yet: one `fetch`, typed by the caller.
  */
-import type { Network } from '@/context/network-context'
+import {
+  CUSTOM_ENDPOINT_STORAGE_KEY,
+  type FixedNetwork,
+  type Network,
+} from '@/context/network-context'
 
-const ENDPOINTS: Record<Network, string> = {
+const ENDPOINTS: Record<FixedNetwork, string> = {
   mainnet: 'https://graphql.mainnet.sui.io/graphql',
   testnet: 'https://graphql.testnet.sui.io/graphql',
   devnet: 'https://graphql.devnet.sui.io/graphql',
 }
 
+/**
+ * The GraphQL URL for a network. `custom` reads the user-supplied endpoint from
+ * localStorage (so it's always current — a change is picked up on the next
+ * request); it falls back to mainnet if none is set.
+ */
 export function endpointFor(network: Network): string {
+  if (network === 'custom') {
+    const url =
+      typeof window !== 'undefined'
+        ? localStorage.getItem(CUSTOM_ENDPOINT_STORAGE_KEY)
+        : null
+    return url || ENDPOINTS.mainnet
+  }
   return ENDPOINTS[network]
 }
 

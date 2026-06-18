@@ -9,13 +9,18 @@ import { isUpgradeCapType, upgradeCapData } from './upgradeCap'
 import type { Network } from '@/context/network-context'
 
 const OBJECT_QUERY = `
-query Object($address: SuiAddress!) {
-  object(address: $address) {
+query Object($address: SuiAddress!, $version: UInt53) {
+  object(address: $address, version: $version) {
     address
     version
     digest
     storageRebate
     previousTransaction { digest }
+    # Immediate neighbours in this object's version history — drive the version
+    # stepper / "historical" detection. A non-empty newerVersion means the node
+    # we're showing isn't the latest (i.e. we're viewing a historical snapshot).
+    olderVersion: objectVersionsBefore(last: 1) { nodes { version } }
+    newerVersion: objectVersionsAfter(first: 1) { nodes { version } }
     owner {
       __typename
       ... on AddressOwner { owner: address { address } }
@@ -65,12 +70,19 @@ export interface DynamicFieldNode {
       }
 }
 
+/** A `{ nodes: [{ version }] }` probe — at most one neighbour version. */
+type VersionProbe = { nodes: { version: number }[] }
+
 export interface SuiObject {
   address: string
   version: number | null
   digest: string | null
   storageRebate: string | null
   previousTransaction: { digest: string } | null
+  /** The version immediately below the one shown (for stepping back). */
+  olderVersion: VersionProbe | null
+  /** The version immediately above — non-empty ⇒ this is a historical snapshot. */
+  newerVersion: VersionProbe | null
   owner: ObjectOwner | null
   asMovePackage: {
     version: number | null
@@ -99,21 +111,104 @@ export interface ObjectResult {
   displayError: string | null
 }
 
-/** Fetch a single object by id. `object` is `null` when the id doesn't exist. */
+/**
+ * Fetch a single object by id, optionally pinned to a specific `version` (the
+ * latest when omitted). `object` is `null` when the id (or that version) doesn't
+ * exist.
+ */
 export async function fetchObject(
   network: Network,
   address: string,
+  version: number | null,
   signal?: AbortSignal,
 ): Promise<ObjectResult> {
   const { data, errors } = await gqlRequest<{ object: SuiObject | null }>(
     network,
     OBJECT_QUERY,
-    { address },
+    { address, version },
     signal,
   )
   const displayError =
     errors.find((e) => e.path?.includes('display'))?.message ?? null
   return { object: data.object, displayError }
+}
+
+// An object's full version history. Queried newest-first via `last`/`before`:
+// the service returns each page ascending, so we reverse it for display and page
+// "back in time" by passing the previous page's `startCursor` as `before`.
+const OBJECT_VERSIONS_QUERY = `
+query ObjectVersions($address: SuiAddress!, $last: Int!, $before: String) {
+  objectVersions(address: $address, last: $last, before: $before) {
+    pageInfo { hasPreviousPage startCursor }
+    nodes {
+      version
+      digest
+      previousTransaction { digest effects { timestamp } }
+    }
+  }
+}
+`
+
+export interface ObjectVersionNode {
+  version: number
+  digest: string | null
+  /** The transaction that produced this version. */
+  txDigest: string | null
+  timestamp: string | null
+}
+
+export interface ObjectVersionsPage {
+  /** Newest-first. */
+  versions: ObjectVersionNode[]
+  /** More (older) versions exist before this page. */
+  hasOlder: boolean
+  /** Cursor to pass as `before` to fetch the next, older page. */
+  olderCursor: string | null
+}
+
+/**
+ * One page of an object's version history, newest-first. Pass the previous
+ * page's `olderCursor` as `before` to walk further back. `last` is capped at 50
+ * by the service.
+ */
+export async function fetchObjectVersions(
+  network: Network,
+  address: string,
+  opts: { last: number; before?: string | null },
+  signal?: AbortSignal,
+): Promise<ObjectVersionsPage> {
+  const { data } = await gqlRequest<{
+    objectVersions: {
+      pageInfo: { hasPreviousPage: boolean; startCursor: string | null }
+      nodes: {
+        version: number
+        digest: string | null
+        previousTransaction: {
+          digest: string
+          effects: { timestamp: string | null } | null
+        } | null
+      }[]
+    }
+  }>(
+    network,
+    OBJECT_VERSIONS_QUERY,
+    { address, last: opts.last, before: opts.before ?? null },
+    signal,
+  )
+  const conn = data.objectVersions
+  const versions = conn.nodes
+    .map((n) => ({
+      version: n.version,
+      digest: n.digest,
+      txDigest: n.previousTransaction?.digest ?? null,
+      timestamp: n.previousTransaction?.effects?.timestamp ?? null,
+    }))
+    .reverse()
+  return {
+    versions,
+    hasOlder: conn.pageInfo.hasPreviousPage,
+    olderCursor: conn.pageInfo.startCursor,
+  }
 }
 
 // A package's `linkage` is the authoritative dependency list: every package it

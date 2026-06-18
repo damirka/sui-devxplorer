@@ -1,5 +1,8 @@
+import { useEffect, useState } from 'react'
+import { Eye } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
 import { Panel, PanelSection } from '@/components/ui/Panel'
-import { LinkedHash, TypeLink } from '@/components/ui/links'
+import { LinkedHash, TypeLink, useVersionHref } from '@/components/ui/links'
 import { JsonBlock } from '@/components/ui/JsonBlock'
 import { CODE_PRE, DANGER_PRE } from '@/components/ui/codeBlock'
 import { Muted } from '@/components/ui/Field'
@@ -15,6 +18,7 @@ import {
 } from '@/lib/object'
 import { ResultHeader } from './ResultHeader'
 import { ObjectOverview } from './ObjectOverview'
+import { ObjectHistory } from './ObjectHistory'
 import { PackageBody } from './PackageBody'
 import { OwnedObjects } from './OwnedObjects'
 import { DynamicFields } from './DynamicFields'
@@ -27,6 +31,7 @@ import { MvrChip } from './MvrChip'
 import { UpgradeCapPanel, upgradeCapData } from './UpgradeCapPanel'
 import { OwnedUpgradeCaps } from './OwnedUpgradeCaps'
 import { Balances } from './Balances'
+import { DisplayModal } from './DisplayModal'
 import { fetchDefaultSuinsName, atName } from '@/lib/suins'
 import {
   StructDeclaration,
@@ -37,20 +42,32 @@ import {
 
 export function ObjectView({
   value,
+  version = null,
   alias,
   mvrName,
 }: {
   value: string
+  /** Pin the object to this version (`?version=`); latest when null. */
+  version?: number | null
   /** SuiNS name this id was reached by (from a name search), shown as a chip. */
   alias?: string
   /** MVR name this package was reached by (a forward name search), if any. */
   mvrName?: string
 }) {
   const { network } = useNetwork()
+  const navigate = useNavigate()
+  const versionHref = useVersionHref()
   const { data, loading, error } = useAsync(
-    (signal) => fetchObject(network, value, signal),
-    [network, value],
+    (signal) => fetchObject(network, value, version, signal),
+    [network, value, version],
   )
+
+  // The rendered-Display modal. State lives here (not in `MoveObjectBody`, which
+  // unmounts while a version reloads) so the modal stays open as you step
+  // through versions. Reset only when the object/network changes — not on a
+  // version step, which is the whole point.
+  const [displayOpen, setDisplayOpen] = useState(false)
+  useEffect(() => setDisplayOpen(false), [value, network])
 
   // When not reached via a name, reverse-look-up the address's default SuiNS
   // name so any named account/object is indicated. Lazy, non-blocking.
@@ -65,10 +82,14 @@ export function ObjectView({
   // A package is just an immutable object, but it reads as a "package" to a
   // dev — so once loaded, badge it as one. Unknown until the fetch resolves.
   const isPackage = !!obj?.asMovePackage
+  // A pinned version that resolves to nothing is a bad version, not an address.
+  const missingVersion = version != null && !loading && !error && data != null && !obj
   // Object ids and account addresses share a shape. When nothing resolves at
   // the id, don't dead-end: treat it as an account address — it may still own
-  // objects and have transaction history worth seeing.
-  const isAddress = !loading && !error && data != null && !obj
+  // objects and have transaction history worth seeing. (Not when a version is
+  // pinned — that's a specific object lookup, handled above.)
+  const isAddress =
+    version == null && !loading && !error && data != null && !obj
 
   // An address carries no on-chain marker for how it signs — the only signal is
   // a transaction it authored. Probe for it once we know this id is an address,
@@ -79,6 +100,14 @@ export function ObjectView({
       isAddress ? fetchSignerScheme(network, value, signal) : Promise.resolve(null),
     [network, value, isAddress],
   )
+
+  // Display data for the modal, read from the live `obj` (null while a version
+  // reloads — the modal retains the last render across that gap).
+  const display = obj?.asMoveObject?.contents?.display?.output
+  const displayOutput =
+    display && typeof display === 'object' && !Array.isArray(display)
+      ? (display as Record<string, unknown>)
+      : null
 
   return (
     <div>
@@ -93,6 +122,9 @@ export function ObjectView({
             )}
             {domain && <Badge kind="suins">{atName(domain)}</Badge>}
             {signer.data && <Badge>{signer.data.scheme}</Badge>}
+            {obj && !isPackage && version != null && (
+              <Badge>v{obj.version}</Badge>
+            )}
           </span>
         }
       />
@@ -107,6 +139,15 @@ export function ObjectView({
 
       {error && (
         <EmptyState title="failed to load object">{error.message}</EmptyState>
+      )}
+
+      {missingVersion && (
+        <EmptyState title={`no version ${version} of this object`}>
+          this object has no such version on {network}.{' '}
+          <Link to={versionHref(null)} className="text-primary hover:underline">
+            view latest
+          </Link>
+        </EmptyState>
       )}
 
       {isAddress && (
@@ -128,8 +169,26 @@ export function ObjectView({
         (isPackage ? (
           <PackageBody data={obj} mvrName={mvrName} />
         ) : (
-          <MoveObjectBody data={obj} displayError={data?.displayError ?? null} />
+          <MoveObjectBody
+            data={obj}
+            displayError={data?.displayError ?? null}
+            onViewDisplay={() => setDisplayOpen(true)}
+          />
         ))}
+
+      {/* Rendered-display modal — mounted at the view root (keyed per object)
+          so it survives the version reloads `MoveObjectBody` does not. */}
+      <DisplayModal
+        key={`${network}|${value}`}
+        open={displayOpen}
+        onClose={() => setDisplayOpen(false)}
+        output={displayOutput}
+        loading={loading}
+        version={obj?.version ?? null}
+        olderVersion={obj?.olderVersion?.nodes[0]?.version ?? null}
+        newerVersion={obj?.newerVersion?.nodes[0]?.version ?? null}
+        onStep={(v) => navigate(versionHref(v))}
+      />
     </div>
   )
 }
@@ -137,11 +196,44 @@ export function ObjectView({
 function MoveObjectBody({
   data,
   displayError,
+  onViewDisplay,
 }: {
   data: SuiObject
   displayError: string | null
+  /** Open the rendered-display modal (owned by `ObjectView`). */
+  onViewDisplay: () => void
 }) {
   const { network } = useNetwork()
+  const navigate = useNavigate()
+  const versionHref = useVersionHref()
+
+  // Immediate version neighbours, for the left/right stepper. A newer neighbour
+  // existing means we're viewing a historical snapshot, not the live object.
+  const olderVersion = data.olderVersion?.nodes[0]?.version ?? null
+  const newerVersion = data.newerVersion?.nodes[0]?.version ?? null
+  const historical = newerVersion != null
+  const hasHistory = olderVersion != null || newerVersion != null
+
+  // Hidden power-user nav: ←/→ step to the older/newer version (unless typing
+  // in a field). Exact neighbours, so it hops across Lamport-version gaps.
+  useEffect(() => {
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+      const a = document.activeElement as HTMLElement | null
+      const tag = a?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || a?.isContentEditable) {
+        return
+      }
+      const target = e.key === 'ArrowLeft' ? olderVersion : newerVersion
+      if (target == null) return
+      e.preventDefault()
+      navigate(versionHref(target))
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [olderVersion, newerVersion, navigate, versionHref])
+
   const move = data.asMoveObject
   const display = move?.contents?.display
   const objectType = move?.contents?.type.repr ?? null
@@ -196,8 +288,30 @@ function MoveObjectBody({
     <Muted>—</Muted>
   )
 
+  // `live` = viewing the current version. The state-derived panels below
+  // (dynamic fields, owned objects, balances, transactions, rendered display)
+  // always reflect the *latest* object, so we hide them on a historical
+  // snapshot rather than show stale-looking current data next to old contents.
+  const live = !historical
+
   return (
     <div className="space-y-6">
+      {historical && (
+        <div className="border-line bg-surface-2 flex flex-wrap items-center gap-x-3 gap-y-1 border px-4 py-3 font-mono text-xs">
+          <span className="text-primary shrink-0">viewing v{data.version}</span>
+          <span className="text-muted">
+            — a historical snapshot. live-only panels (dynamic fields, owned
+            objects, balances, transactions) are hidden.
+          </span>
+          <Link
+            to={versionHref(null)}
+            className="text-primary ml-auto shrink-0 hover:underline"
+          >
+            view latest →
+          </Link>
+        </div>
+      )}
+
       <div
         className={
           showTypeDef
@@ -238,7 +352,11 @@ function MoveObjectBody({
 
       {upgradeCap && <UpgradeCapPanel cap={upgradeCap} />}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      {hasHistory && (
+        <ObjectHistory id={data.address} currentVersion={data.version} />
+      )}
+
+      <div className={live ? 'grid grid-cols-1 gap-6 lg:grid-cols-2' : undefined}>
         <Panel>
           <PanelSection label="Fields">
             {move?.contents ? (
@@ -249,13 +367,32 @@ function MoveObjectBody({
           </PanelSection>
         </Panel>
 
-        <DynamicFields id={data.address} />
+        {/* Dynamic fields resolve to the live object only — hide on a snapshot. */}
+        {live && <DynamicFields id={data.address} />}
       </div>
 
+      {/* Display renders from THIS node's contents (the resolver applies the
+          current Display<T> template to the version's fields), so it's honest to
+          show on a historical snapshot too — unlike the live-only panels below. */}
       {hasDisplay && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <Panel>
-            <PanelSection label="Display">
+            <PanelSection
+              label="Display"
+              action={
+                display?.output != null ? (
+                  <button
+                    type="button"
+                    onClick={onViewDisplay}
+                    className="border-line text-muted hover:text-primary inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-xs transition-colors"
+                    title="view the rendered display"
+                  >
+                    <Eye size={12} />
+                    view rendered
+                  </button>
+                ) : undefined
+              }
+            >
               {display?.output != null ? (
                 <pre className={CODE_PRE}>
                   <code>{JSON.stringify(display.output, null, 2)}</code>
@@ -308,9 +445,13 @@ function MoveObjectBody({
         </div>
       )}
 
-      <Balances id={data.address} hideWhenEmpty />
-      <OwnedObjects id={data.address} />
-      <Txs id={data.address} relation="object" label="Transactions" />
+      {live && (
+        <>
+          <Balances id={data.address} hideWhenEmpty />
+          <OwnedObjects id={data.address} />
+          <Txs id={data.address} relation="object" label="Transactions" />
+        </>
+      )}
     </div>
   )
 }

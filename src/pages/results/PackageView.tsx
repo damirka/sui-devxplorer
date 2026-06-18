@@ -26,7 +26,7 @@ export function PackageView({ value }: { value: string }) {
   const highlightType = typeName?.split('<')[0]
 
   const { data, loading, error } = useAsync(
-    (signal) => fetchObject(network, packageId, signal),
+    (signal) => fetchObject(network, packageId, null, signal),
     [network, packageId],
   )
 

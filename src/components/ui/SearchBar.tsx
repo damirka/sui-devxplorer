@@ -92,6 +92,7 @@ export function SearchBar({ variant = 'hero', autoFocus }: SearchBarProps) {
     setSearchParams((prev) => {
       const params = new URLSearchParams(prev)
       params.set('search', trimmed)
+      params.delete('version') // a new search is a fresh entity — drop any version pin
       return params
     })
     setValue('')

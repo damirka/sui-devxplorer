@@ -4,12 +4,27 @@ import { CopyButton } from './CopyButton'
 import { formatType } from '@/lib/format'
 import { truncateMiddle } from '@/lib/search'
 
-/** Build a `?search=` href for the current location, preserving other params. */
+/** Build a `?search=` href for the current location, preserving other params.
+ * Drops `version` — a pinned object version belongs to the id being left, not
+ * the new entity being navigated to. */
 export function useSearchHref() {
   const [params] = useSearchParams()
   return (value: string) => {
     const next = new URLSearchParams(params)
     next.set('search', value)
+    next.delete('version')
+    return `?${next.toString()}`
+  }
+}
+
+/** Build an href that pins the current object to a `version` (or clears the pin
+ * when `null` → back to latest), preserving the active search id and network. */
+export function useVersionHref() {
+  const [params] = useSearchParams()
+  return (version: number | null) => {
+    const next = new URLSearchParams(params)
+    if (version == null) next.delete('version')
+    else next.set('version', String(version))
     return `?${next.toString()}`
   }
 }
