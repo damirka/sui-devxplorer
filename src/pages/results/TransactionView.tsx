@@ -1,4 +1,13 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react'
+import {
+  Fragment,
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { ChevronDown, ChevronRight, ChevronUp } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Panel, PanelSection } from '@/components/ui/Panel'
@@ -29,6 +38,7 @@ import {
   usedResults,
   netGasUsed,
   failedCommandIndex,
+  failedInstructionOffset,
   inputType,
   addressLikeArity,
   type SuiTransaction,
@@ -43,10 +53,34 @@ import {
   buildSdkProgram,
   buildCliProgram,
   programToText,
+  programVarNames,
   PUBLISH_RESULT_TYPE,
   UPGRADE_RESULT_TYPE,
+  type ProgramNames,
 } from '@/lib/program'
 import { ResultHeader } from './ResultHeader'
+
+/** Variable names for the PTB's object inputs (`coin_sui`, `kiosk`, …) and
+ * command results — so `Input(ix)` / `Result(cmd)` arguments render by name
+ * instead of `inputN` / `resN`. Provided by `ProgramPanel`. */
+const ProgramNamesContext = createContext<ProgramNames>({
+  inputs: new Map(),
+  results: new Map(),
+})
+
+/** Where a failed tx aborted, so the failed command's disassembly can highlight
+ * (and scroll to) the offending instruction. `nonce` bumps when the user clicks
+ * the `(instruction N)` link in the error to focus it. */
+interface AbortFocus {
+  failedCommand: number | null
+  failedInstruction: number | null
+  nonce: number
+}
+const AbortFocusContext = createContext<AbortFocus>({
+  failedCommand: null,
+  failedInstruction: null,
+  nonce: 0,
+})
 
 /**
  * Transaction view — the flagship devx surface. Live over GraphQL: the
@@ -104,9 +138,19 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
     fx?.status === 'FAILURE'
       ? failedCommandIndex(fx.executionError?.message)
       : null
+  const failedInstruction =
+    fx?.status === 'FAILURE'
+      ? failedInstructionOffset(fx.executionError?.message)
+      : null
   const [inputsOpen, setInputsOpen] = useState(false)
+  // Bumped when the user clicks the error's `(instruction N)` link — the failed
+  // command's disassembly watches it to open + scroll to the offending line.
+  const [asmFocus, setAsmFocus] = useState(0)
 
   return (
+    <AbortFocusContext.Provider
+      value={{ failedCommand, failedInstruction, nonce: asmFocus }}
+    >
     <div className="space-y-6">
       <Panel>
         <PanelSection>
@@ -194,9 +238,18 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
                             {'\n'}
                           </Fragment>
                         ))}
-                        {ee.message
-                          ? linkifyMoveText(ee.message)
-                          : head.length === 0 && 'transaction failed'}
+                        {ee.message ? (
+                          <AbortMessage
+                            message={ee.message}
+                            onFocusInstruction={
+                              failedCommand != null
+                                ? () => setAsmFocus((n) => n + 1)
+                                : undefined
+                            }
+                          />
+                        ) : (
+                          head.length === 0 && 'transaction failed'
+                        )}
                       </>
                     )
                   })()}
@@ -271,6 +324,35 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
         </Panel>
       )}
     </div>
+    </AbortFocusContext.Provider>
+  )
+}
+
+/** The execution-error message, with any `(instruction N)` turned into a button
+ * that jumps to the failed line in the disassembly; the rest is linkified. */
+function AbortMessage({
+  message,
+  onFocusInstruction,
+}: {
+  message: string
+  onFocusInstruction?: () => void
+}) {
+  const m = /\(instruction (\d+)\)/.exec(message)
+  if (!m || !onFocusInstruction) return <>{linkifyMoveText(message)}</>
+  return (
+    <>
+      {linkifyMoveText(message.slice(0, m.index))}
+      (instruction{' '}
+      <button
+        type="button"
+        onClick={onFocusInstruction}
+        className="cursor-pointer underline decoration-dotted underline-offset-2 hover:text-primary"
+        title="jump to the failed instruction in the disassembly"
+      >
+        {m[1]}
+      </button>
+      ){linkifyMoveText(message.slice(m.index + m[0].length))}
+    </>
   )
 }
 
@@ -424,11 +506,13 @@ function ProgramPanel({
   const sdk = useMemo(() => buildSdkProgram(commands, inputs), [commands, inputs])
   const cli = useMemo(() => buildCliProgram(commands, inputs), [commands, inputs])
   const script = useMemo(() => programToText(commands, inputs), [commands, inputs])
+  const names = useMemo(() => programVarNames(commands, inputs), [commands, inputs])
   const copyValue = tab === 'sdk' ? sdk : tab === 'cli' ? cli : script
   const copyLabel =
     tab === 'sdk' ? 'Copy as TS SDK' : tab === 'cli' ? 'Copy CLI command' : 'Copy script'
 
   return (
+    <ProgramNamesContext.Provider value={names}>
     <Panel>
       <PanelSection
         label="Program"
@@ -476,6 +560,7 @@ function ProgramPanel({
         )}
       </PanelSection>
     </Panel>
+    </ProgramNamesContext.Provider>
   )
 }
 
@@ -578,7 +663,6 @@ function CommandStatement({
       >
         {assigned && (
           <>
-            <span className="text-muted">let </span>
             <ResultToken cmd={index} ix={null} commands={commands} />
             <span className="text-muted"> = </span>
           </>
@@ -586,7 +670,7 @@ function CommandStatement({
         <CallExpr cmd={cmd} inputs={inputs} commands={commands} />
         <span className="text-muted">;</span>
         {cmd.__typename === 'MoveCallCommand' && cmd.function && (
-          <MoveCallAsm fn={cmd.function} />
+          <MoveCallAsm fn={cmd.function} cmdIndex={index} />
         )}
       </div>
     </>
@@ -594,9 +678,17 @@ function CommandStatement({
 }
 
 /** A lazy, toggleable disassembly of a MoveCall's function body. */
-function MoveCallAsm({ fn }: { fn: MoveFn }) {
+function MoveCallAsm({ fn, cmdIndex }: { fn: MoveFn; cmdIndex: number }) {
   const { network } = useNetwork()
   const [open, setOpen] = useState(false)
+  const failedLineRef = useRef<HTMLDivElement>(null)
+
+  // The failed instruction belongs to *this* command only when it's the one
+  // that aborted; the disassembly is per-function, so the offset maps to a line.
+  const abort = useContext(AbortFocusContext)
+  const failedInstruction =
+    abort.failedCommand === cmdIndex ? abort.failedInstruction : null
+
   const { data, loading, error } = useAsync(
     (signal) =>
       open
@@ -610,6 +702,21 @@ function MoveCallAsm({ fn }: { fn: MoveFn }) {
         : Promise.resolve(null),
     [network, open, fn.module.package.address, fn.module.name, fn.name],
   )
+
+  // Clicking the error's `(instruction N)` link bumps the nonce → open this asm.
+  useEffect(() => {
+    if (abort.nonce > 0 && failedInstruction != null) setOpen(true)
+  }, [abort.nonce, failedInstruction])
+
+  // Once open and loaded, scroll the failed line into view.
+  useEffect(() => {
+    if (open && failedInstruction != null) {
+      failedLineRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+  }, [open, abort.nonce, data, failedInstruction])
+
+  const failedLine =
+    failedInstruction != null ? new RegExp(`^\\s*${failedInstruction}:`) : null
 
   return (
     <>
@@ -635,7 +742,22 @@ function MoveCallAsm({ fn }: { fn: MoveFn }) {
           )}
           {data && (
             <pre className="bg-bg border-line text-muted overflow-x-auto border p-3 text-[0.6875rem] leading-5">
-              <code>{data}</code>
+              <code>
+                {data.split('\n').map((line, i) => {
+                  const isFailed = !!failedLine && failedLine.test(line)
+                  return (
+                    <div
+                      key={i}
+                      ref={isFailed ? failedLineRef : undefined}
+                      className={
+                        isFailed ? 'bg-danger/20 text-danger -mx-3 px-3' : undefined
+                      }
+                    >
+                      {line || ' '}
+                    </div>
+                  )
+                })}
+              </code>
             </pre>
           )}
         </div>
@@ -812,10 +934,17 @@ function ArgToken({
   return (
     <HoverCard card={<InputCard ix={arg.ix} input={input} />}>
       <span className="text-secondary cursor-help underline decoration-dotted underline-offset-2">
-        input{arg.ix}
+        <InputName ix={arg.ix} />
       </span>
     </HoverCard>
   )
+}
+
+/** An object input's variable name (`coin_sui`, `kiosk`, …) when it has one, else
+ * the generic `inputN`. */
+function InputName({ ix }: { ix: number }) {
+  const { inputs } = useContext(ProgramNamesContext)
+  return <>{inputs.get(ix) ?? `input${ix}`}</>
 }
 
 /** A reference to a prior command's result. */
@@ -828,7 +957,9 @@ function ResultToken({
   ix: number | null
   commands: TxCommand[]
 }) {
-  const label = ix == null ? `res${cmd}` : `res${cmd}.${ix}`
+  const { results } = useContext(ProgramNamesContext)
+  const name = results.get(cmd) ?? `res${cmd}`
+  const label = ix == null ? name : `${name}.${ix}`
   return (
     <HoverCard card={<ResultCard index={cmd} cmd={commands[cmd]} />}>
       <span className="text-primary cursor-help underline decoration-dotted underline-offset-2">
@@ -842,7 +973,9 @@ function ResultToken({
 function InputCard({ ix, input }: { ix: number; input: TxInput | undefined }) {
   return (
     <div className="space-y-2">
-      <div className="text-secondary">input{ix}</div>
+      <div className="text-secondary">
+        <InputName ix={ix} />
+      </div>
       {input ? (
         <InputValue input={input} />
       ) : (

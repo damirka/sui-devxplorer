@@ -1,14 +1,12 @@
 import { Link } from 'react-router-dom'
 import { Panel, PanelSection } from '@/components/ui/Panel'
-import { Pager, useCursorPager } from '@/components/ui/Pager'
-import { RowIndex } from '@/components/ui/RowIndex'
-import { SkeletonLines } from '@/components/ui/Skeleton'
+import { Pager, usePagedList } from '@/components/ui/Pager'
+import { DataList } from '@/components/ui/DataList'
 import { LinkedHash, useVersionHref } from '@/components/ui/links'
 import { useNetwork } from '@/context/useNetwork'
-import { useAsync } from '@/lib/useAsync'
-import { fetchObjectVersions } from '@/lib/object'
-import { formatTimestamp } from '@/lib/format'
+import { describeOwner, fetchObjectVersions } from '@/lib/object'
 import { cn } from '@/lib/cn'
+import { TransactionRow } from './TransactionRow'
 
 /**
  * The transactions that touched an object, derived from its version history —
@@ -23,65 +21,47 @@ import { cn } from '@/lib/cn'
 export function ObjectTransactions({
   id,
   currentVersion,
+  showOwners = false,
 }: {
   id: string
   /** The version currently being viewed — its row is marked. */
   currentVersion: number | null
+  /** Surface ownership *changes* in the history: a version whose owner differs
+   *  from the tx sender (a transfer / receipt) shows the new owner. Only
+   *  meaningful for address/object-owned objects — off for shared/immutable. */
+  showOwners?: boolean
 }) {
   const { network } = useNetwork()
   const versionHref = useVersionHref()
-  const pager = useCursorPager(`${network}|${id}`)
-  const { data, loading, error } = useAsync(
-    (signal) =>
-      fetchObjectVersions(
-        network,
-        id,
-        { last: pager.pageSize, before: pager.after },
-        signal,
-      ),
-    [network, id, pager.pageSize, pager.after],
+  const { items, loading, error, paged, pagerProps } = usePagedList(
+    `${network}|${id}`,
+    (args, signal) => fetchObjectVersions(network, id, args, signal),
   )
-
-  const paged = pager.pageIndex > 0 || !!data?.hasOlder
 
   return (
     <Panel>
       <PanelSection
         label="Transactions"
-        action={
-          paged ? (
-            <Pager
-              pageIndex={pager.pageIndex}
-              pageSize={pager.pageSize}
-              onPageSize={pager.setPageSize}
-              hasNext={!!data?.hasOlder}
-              onPrev={pager.prev}
-              onNext={() => pager.next(data?.olderCursor ?? null)}
-              label="transactions"
-            />
-          ) : undefined
-        }
+        action={paged ? <Pager {...pagerProps} label="transactions" /> : undefined}
       >
-        {loading ? (
-          <SkeletonLines count={5} />
-        ) : error ? (
-          <span className="text-danger font-mono text-xs">{error.message}</span>
-        ) : data && data.versions.length > 0 ? (
-          <ul className="divide-line divide-y font-mono text-xs">
-            {data.versions.map((v, i) => (
-              <li
+        <DataList loading={loading} error={error} items={items} empty="no transactions.">
+          {(v, i) => {
+            // Show the owner only when it differs from the tx sender — i.e. the
+            // object changed hands at this version. A self-tx (owner == sender)
+            // would just repeat the sender, so it's left off.
+            const ownerAddr = describeOwner(v.owner).address
+            const transferredTo =
+              showOwners && ownerAddr && ownerAddr !== v.sender ? ownerAddr : null
+            return (
+              <TransactionRow
                 key={v.version}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5"
+                index={pagerProps.pageIndex * pagerProps.pageSize + i + 1}
+                digest={v.txDigest}
+                timestamp={v.timestamp}
+                sender={v.sender}
+                status={v.status}
+                wrap
               >
-                <RowIndex n={pager.pageIndex * pager.pageSize + i + 1} />
-                {v.txDigest ? (
-                  <LinkedHash value={v.txDigest} />
-                ) : (
-                  <span className="text-muted">—</span>
-                )}
-                <span className="text-muted shrink-0">
-                  {formatTimestamp(v.timestamp)}
-                </span>
                 <Link
                   to={versionHref(v.version)}
                   title={`view this object at v${v.version}`}
@@ -92,25 +72,18 @@ export function ObjectTransactions({
                 >
                   v{v.version}
                 </Link>
-                {v.sender && (
-                  <span className="text-muted inline-flex shrink-0 items-center gap-1.5">
-                    by <LinkedHash value={v.sender} />
+                {transferredTo && (
+                  <span
+                    className="text-muted inline-flex shrink-0 items-center gap-1.5"
+                    title="owner after this transaction"
+                  >
+                    → <LinkedHash value={transferredTo} />
                   </span>
                 )}
-                <span
-                  className={cn(
-                    'ml-auto shrink-0',
-                    v.status === 'FAILURE' ? 'text-danger' : 'text-secondary',
-                  )}
-                >
-                  {v.status?.toLowerCase() ?? '—'}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <span className="text-muted text-sm">no transactions.</span>
-        )}
+              </TransactionRow>
+            )
+          }}
+        </DataList>
       </PanelSection>
     </Panel>
   )

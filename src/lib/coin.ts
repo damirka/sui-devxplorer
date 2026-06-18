@@ -7,6 +7,7 @@
  * `coinMetadata` supplies decimals + symbol for human-readable formatting.
  */
 import { gqlRequest } from './graphql'
+import { mapPage, type Page, type PageArgs } from './pagination'
 import type { Network } from '@/context/network-context'
 
 export interface CoinMeta {
@@ -94,23 +95,17 @@ export interface CoinBalance {
   inAccumulator: string
 }
 
-export interface BalancesPage {
-  balances: CoinBalance[]
-  hasNextPage: boolean
-  endCursor: string | null
-}
-
 /**
- * One page of an owner's coin balances, aggregated per coin type. `first` is
+ * One page of an owner's coin balances, aggregated per coin type. `limit` is
  * capped at 50 by the service. Works for any id (account address, object, or
  * package); the page is empty for owners holding no coins.
  */
 export async function fetchBalances(
   network: Network,
   ownerId: string,
-  opts: { first: number; after?: string | null },
+  args: PageArgs,
   signal?: AbortSignal,
-): Promise<BalancesPage> {
+): Promise<Page<CoinBalance>> {
   const { data } = await gqlRequest<{
     address: {
       balances: {
@@ -126,21 +121,15 @@ export async function fetchBalances(
   }>(
     network,
     BALANCES_QUERY,
-    { address: ownerId, first: opts.first, after: opts.after ?? null },
+    { address: ownerId, first: args.limit, after: args.cursor ?? null },
     signal,
   )
-  const conn = data.address?.balances
-  if (!conn) return { balances: [], hasNextPage: false, endCursor: null }
-  return {
-    balances: conn.nodes.map((n) => ({
-      coinType: n.coinType.repr,
-      total: n.totalBalance ?? '0',
-      inCoins: n.coinBalance ?? '0',
-      inAccumulator: n.addressBalance ?? '0',
-    })),
-    hasNextPage: conn.pageInfo.hasNextPage,
-    endCursor: conn.pageInfo.endCursor,
-  }
+  return mapPage(data.address?.balances, (n) => ({
+    coinType: n.coinType.repr,
+    total: n.totalBalance ?? '0',
+    inCoins: n.coinBalance ?? '0',
+    inAccumulator: n.addressBalance ?? '0',
+  }))
 }
 
 /**
@@ -197,4 +186,55 @@ export async function fetchBalancesForTypes(
       inAccumulator: b?.addressBalance ?? '0',
     }
   })
+}
+
+/** A `Coin<T>` object's raw value (its `balance` field) out of the object's
+ *  flattened Move contents. `Balance<T>` serializes to its `value` directly, but
+ *  parse defensively for the nested `{ value }` form too. `null` when absent. */
+function coinBalanceFromJson(json: unknown): string | null {
+  if (!json || typeof json !== 'object') return null
+  const b = (json as Record<string, unknown>).balance
+  if (typeof b === 'string') return b
+  if (typeof b === 'number') return String(b)
+  if (b && typeof b === 'object') {
+    const v = (b as Record<string, unknown>).value
+    if (typeof v === 'string') return v
+    if (typeof v === 'number') return String(v)
+  }
+  return null
+}
+
+const COIN_VALUES_CHUNK = 50
+
+/**
+ * The raw value (smallest unit) of each `Coin<T>` object, by object id — read
+ * from each object's `contents.json.balance`. Fans out with aliased `object()`
+ * selections, chunked so a long owned-coins list stays within one request each.
+ * Ids are inlined (validated 0x-hex from on-chain data); objects without a coin
+ * balance are simply absent. Pair with `fetchCoinMetadata` to scale by decimals.
+ */
+export async function fetchCoinObjectBalances(
+  network: Network,
+  ids: string[],
+  signal?: AbortSignal,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  const unique = [...new Set(ids)]
+  for (let i = 0; i < unique.length; i += COIN_VALUES_CHUNK) {
+    const chunk = unique.slice(i, i + COIN_VALUES_CHUNK)
+    const selections = chunk
+      .map(
+        (id, j) =>
+          `c${j}: object(address: "${id}") { asMoveObject { contents { json } } }`,
+      )
+      .join('\n')
+    const { data } = await gqlRequest<
+      Record<string, { asMoveObject: { contents: { json: unknown } | null } | null } | null>
+    >(network, `query CoinValues {\n${selections}\n}`, {}, signal)
+    chunk.forEach((id, j) => {
+      const bal = coinBalanceFromJson(data[`c${j}`]?.asMoveObject?.contents?.json)
+      if (bal != null) out.set(id, bal)
+    })
+  }
+  return out
 }

@@ -6,6 +6,13 @@
  */
 import { gqlRequest } from './graphql'
 import { isUpgradeCapType, upgradeCapData } from './upgradeCap'
+import {
+  mapBackwardPage,
+  mapPage,
+  type Page,
+  type PageArgs,
+} from './pagination'
+import type { MoveFunctionSignature } from './move'
 import type { Network } from '@/context/network-context'
 
 const OBJECT_QUERY = `
@@ -143,6 +150,13 @@ query ObjectVersions($address: SuiAddress!, $last: Int!, $before: String) {
     nodes {
       version
       digest
+      owner {
+        __typename
+        ... on AddressOwner { owner: address { address } }
+        ... on ObjectOwner { owner: address { address } }
+        ... on ConsensusAddressOwner { startVersion owner: address { address } }
+        ... on Shared { initialSharedVersion }
+      }
       previousTransaction {
         digest
         sender { address }
@@ -162,34 +176,29 @@ export interface ObjectVersionNode {
   sender: string | null
   status: string | null
   timestamp: string | null
-}
-
-export interface ObjectVersionsPage {
-  /** Newest-first. */
-  versions: ObjectVersionNode[]
-  /** More (older) versions exist before this page. */
-  hasOlder: boolean
-  /** Cursor to pass as `before` to fetch the next, older page. */
-  olderCursor: string | null
+  /** Who owned the object *at* this version — reveals ownership transfers over
+   *  the history. Only meaningful (and shown) for address/object-owned objects. */
+  owner: ObjectOwner | null
 }
 
 /**
- * One page of an object's version history, newest-first. Pass the previous
- * page's `olderCursor` as `before` to walk further back. `last` is capped at 50
- * by the service.
+ * One page of an object's version history, newest-first (the `Page` is paged
+ * backward in time — its `endCursor` walks to the next, older page). `limit` is
+ * capped at 50 by the service.
  */
 export async function fetchObjectVersions(
   network: Network,
   address: string,
-  opts: { last: number; before?: string | null },
+  args: PageArgs,
   signal?: AbortSignal,
-): Promise<ObjectVersionsPage> {
+): Promise<Page<ObjectVersionNode>> {
   const { data } = await gqlRequest<{
     objectVersions: {
       pageInfo: { hasPreviousPage: boolean; startCursor: string | null }
       nodes: {
         version: number
         digest: string | null
+        owner: ObjectOwner | null
         previousTransaction: {
           digest: string
           sender: { address: string } | null
@@ -200,25 +209,18 @@ export async function fetchObjectVersions(
   }>(
     network,
     OBJECT_VERSIONS_QUERY,
-    { address, last: opts.last, before: opts.before ?? null },
+    { address, last: args.limit, before: args.cursor ?? null },
     signal,
   )
-  const conn = data.objectVersions
-  const versions = conn.nodes
-    .map((n) => ({
-      version: n.version,
-      digest: n.digest,
-      txDigest: n.previousTransaction?.digest ?? null,
-      sender: n.previousTransaction?.sender?.address ?? null,
-      status: n.previousTransaction?.effects?.status ?? null,
-      timestamp: n.previousTransaction?.effects?.timestamp ?? null,
-    }))
-    .reverse()
-  return {
-    versions,
-    hasOlder: conn.pageInfo.hasPreviousPage,
-    olderCursor: conn.pageInfo.startCursor,
-  }
+  return mapBackwardPage(data.objectVersions, (n) => ({
+    version: n.version,
+    digest: n.digest,
+    txDigest: n.previousTransaction?.digest ?? null,
+    sender: n.previousTransaction?.sender?.address ?? null,
+    status: n.previousTransaction?.effects?.status ?? null,
+    timestamp: n.previousTransaction?.effects?.timestamp ?? null,
+    owner: n.owner ?? null,
+  }))
 }
 
 // A package's `linkage` is the authoritative dependency list: every package it
@@ -277,22 +279,16 @@ query DynamicFields($address: SuiAddress!, $first: Int, $after: String) {
 }
 `
 
-export interface DynamicFieldPage {
-  fields: DynamicFieldNode[]
-  hasNextPage: boolean
-  endCursor: string | null
-}
-
 /**
- * One page of an object's dynamic fields. `first` is capped at 50 by the
+ * One page of an object's dynamic fields. `limit` is capped at 50 by the
  * service. Returns an empty page for objects that can't hold dynamic fields.
  */
 export async function fetchDynamicFields(
   network: Network,
   objectId: string,
-  opts: { first: number; after?: string | null },
+  args: PageArgs,
   signal?: AbortSignal,
-): Promise<DynamicFieldPage> {
+): Promise<Page<DynamicFieldNode>> {
   const { data } = await gqlRequest<{
     address: {
       dynamicFields: {
@@ -303,16 +299,10 @@ export async function fetchDynamicFields(
   }>(
     network,
     DYNAMIC_FIELDS_QUERY,
-    { address: objectId, first: opts.first, after: opts.after ?? null },
+    { address: objectId, first: args.limit, after: args.cursor ?? null },
     signal,
   )
-  const conn = data.address?.dynamicFields
-  if (!conn) return { fields: [], hasNextPage: false, endCursor: null }
-  return {
-    fields: conn.nodes,
-    hasNextPage: conn.pageInfo.hasNextPage,
-    endCursor: conn.pageInfo.endCursor,
-  }
+  return mapPage(data.address?.dynamicFields, (n) => n)
 }
 
 /**
@@ -438,14 +428,8 @@ query FunctionDef($package: SuiAddress!, $module: String!, $name: String!) {
 }
 `
 
-export interface MoveFunctionDef {
-  name: string
-  visibility: string | null
-  isEntry: boolean | null
-  typeParameters: { constraints: string[] }[]
-  parameters: { repr: string }[]
-  return: { repr: string }[]
-}
+/** A package module's declared function signature. */
+export type MoveFunctionDef = MoveFunctionSignature
 
 /**
  * Fetch a function's structured signature (visibility, type params, parameter
@@ -531,19 +515,13 @@ export interface PackageModuleInfo {
   datatypes: string[]
 }
 
-interface ModulesPage {
-  mods: PackageModuleInfo[]
-  hasNextPage: boolean
-  endCursor: string | null
-}
-
 /** One page of a package's modules (each with its datatype names). */
 async function fetchModulesPage(
   network: Network,
   packageId: string,
   after: string | null,
   signal?: AbortSignal,
-): Promise<ModulesPage> {
+): Promise<Page<PackageModuleInfo>> {
   const { data } = await gqlRequest<{
     object: {
       asMovePackage: {
@@ -554,16 +532,10 @@ async function fetchModulesPage(
       } | null
     } | null
   }>(network, PACKAGE_MODULES_QUERY, { address: packageId, after }, signal)
-  const conn = data.object?.asMovePackage?.modules
-  if (!conn) return { mods: [], hasNextPage: false, endCursor: null }
-  return {
-    mods: conn.nodes.map((n) => ({
-      name: n.name,
-      datatypes: n.datatypes.nodes.map((d) => d.name),
-    })),
-    hasNextPage: conn.pageInfo.hasNextPage,
-    endCursor: conn.pageInfo.endCursor,
-  }
+  return mapPage(data.object?.asMovePackage?.modules, (n) => ({
+    name: n.name,
+    datatypes: n.datatypes.nodes.map((d) => d.name),
+  }))
 }
 
 /**
@@ -580,7 +552,7 @@ export async function fetchAllModules(
   let after: string | null = null
   for (;;) {
     const page = await fetchModulesPage(network, packageId, after, signal)
-    mods.push(...page.mods)
+    mods.push(...page.items)
     if (!page.hasNextPage) break
     after = page.endCursor
   }
@@ -669,12 +641,6 @@ export interface OwnedObject {
   description: string | null
 }
 
-export interface OwnedPage {
-  objects: OwnedObject[]
-  hasNextPage: boolean
-  endCursor: string | null
-}
-
 interface OwnedQueryResult {
   address: {
     objects: {
@@ -708,43 +674,35 @@ function displayField(output: unknown, key: string): string | null {
 export async function fetchOwnedPage(
   network: Network,
   ownerId: string,
-  opts: {
-    first: number
-    after?: string | null
+  opts: PageArgs & {
     type?: string | null
     /** Also fetch each object's rendered Display (name/description). Off by
      * default so the full-ownership type scan stays lean. */
     display?: boolean
   },
   signal?: AbortSignal,
-): Promise<OwnedPage> {
+): Promise<Page<OwnedObject>> {
   const { data } = await gqlRequest<OwnedQueryResult>(
     network,
     OWNED_QUERY,
     {
       address: ownerId,
-      first: opts.first,
-      after: opts.after ?? null,
+      first: opts.limit,
+      after: opts.cursor ?? null,
       filter: opts.type ? { type: opts.type } : null,
       withDisplay: opts.display ?? false,
     },
     signal,
   )
-  const conn = data.address?.objects
-  if (!conn) return { objects: [], hasNextPage: false, endCursor: null }
-  return {
-    objects: conn.nodes.map((n) => {
-      const output = n.contents?.display?.output ?? null
-      return {
-        address: n.address,
-        type: n.contents?.type.repr ?? null,
-        name: displayField(output, 'name'),
-        description: displayField(output, 'description'),
-      }
-    }),
-    hasNextPage: conn.pageInfo.hasNextPage,
-    endCursor: conn.pageInfo.endCursor,
-  }
+  return mapPage(data.address?.objects, (n) => {
+    const output = n.contents?.display?.output ?? null
+    return {
+      address: n.address,
+      type: n.contents?.type.repr ?? null,
+      name: displayField(output, 'name'),
+      description: displayField(output, 'description'),
+    }
+  })
 }
 
 // The UpgradeCaps an owner holds. Filtered server-side by the cap's type
@@ -774,23 +732,17 @@ export interface OwnedUpgradeCapNode {
   json: unknown
 }
 
-export interface OwnedUpgradeCapsPage {
-  caps: OwnedUpgradeCapNode[]
-  hasNextPage: boolean
-  endCursor: string | null
-}
-
 /**
  * One page of the `0x2::package::UpgradeCap` objects owned by an address (or by
  * an object — ownership is by address, so an object id works as the owner too).
- * `first` is capped at 50 by the service. Empty page when the owner holds none.
+ * `limit` is capped at 50 by the service. Empty page when the owner holds none.
  */
 export async function fetchOwnedUpgradeCaps(
   network: Network,
   ownerId: string,
-  opts: { first: number; after?: string | null },
+  args: PageArgs,
   signal?: AbortSignal,
-): Promise<OwnedUpgradeCapsPage> {
+): Promise<Page<OwnedUpgradeCapNode>> {
   const { data } = await gqlRequest<{
     address: {
       objects: {
@@ -804,20 +756,14 @@ export async function fetchOwnedUpgradeCaps(
   }>(
     network,
     OWNED_UPGRADE_CAPS_QUERY,
-    { address: ownerId, first: opts.first, after: opts.after ?? null },
+    { address: ownerId, first: args.limit, after: args.cursor ?? null },
     signal,
   )
-  const conn = data.address?.objects
-  if (!conn) return { caps: [], hasNextPage: false, endCursor: null }
-  return {
-    caps: conn.nodes.map((n) => ({
-      address: n.address,
-      type: n.contents?.type.repr ?? null,
-      json: n.contents?.json ?? null,
-    })),
-    hasNextPage: conn.pageInfo.hasNextPage,
-    endCursor: conn.pageInfo.endCursor,
-  }
+  return mapPage(data.address?.objects, (n) => ({
+    address: n.address,
+    type: n.contents?.type.repr ?? null,
+    json: n.contents?.json ?? null,
+  }))
 }
 
 // The `0x2::package::Publisher` objects an owner holds. Each Publisher proves
@@ -846,22 +792,16 @@ export interface OwnedPublisher {
   moduleName: string | null
 }
 
-export interface OwnedPublishersPage {
-  publishers: OwnedPublisher[]
-  hasNextPage: boolean
-  endCursor: string | null
-}
-
 /**
  * One page of the `0x2::package::Publisher` objects owned by an address (or
- * object — ownership is by address). `first` is capped at 50. Empty when none.
+ * object — ownership is by address). `limit` is capped at 50. Empty when none.
  */
 export async function fetchOwnedPublishers(
   network: Network,
   ownerId: string,
-  opts: { first: number; after?: string | null },
+  args: PageArgs,
   signal?: AbortSignal,
-): Promise<OwnedPublishersPage> {
+): Promise<Page<OwnedPublisher>> {
   const { data } = await gqlRequest<{
     address: {
       objects: {
@@ -872,27 +812,21 @@ export async function fetchOwnedPublishers(
   }>(
     network,
     OWNED_PUBLISHERS_QUERY,
-    { address: ownerId, first: opts.first, after: opts.after ?? null },
+    { address: ownerId, first: args.limit, after: args.cursor ?? null },
     signal,
   )
-  const conn = data.address?.objects
-  if (!conn) return { publishers: [], hasNextPage: false, endCursor: null }
-  return {
-    publishers: conn.nodes.map((n) => {
-      const json = (n.contents?.json ?? {}) as {
-        package?: unknown
-        module_name?: unknown
-      }
-      const pkg = typeof json.package === 'string' ? json.package : null
-      return {
-        address: n.address,
-        package: pkg ? '0x' + pkg.replace(/^0x/, '') : null,
-        moduleName: typeof json.module_name === 'string' ? json.module_name : null,
-      }
-    }),
-    hasNextPage: conn.pageInfo.hasNextPage,
-    endCursor: conn.pageInfo.endCursor,
-  }
+  return mapPage(data.address?.objects, (n) => {
+    const json = (n.contents?.json ?? {}) as {
+      package?: unknown
+      module_name?: unknown
+    }
+    const pkg = typeof json.package === 'string' ? json.package : null
+    return {
+      address: n.address,
+      package: pkg ? '0x' + pkg.replace(/^0x/, '') : null,
+      moduleName: typeof json.module_name === 'string' ? json.module_name : null,
+    }
+  })
 }
 
 // Finding the UpgradeCap that governs a package has no direct GraphQL filter

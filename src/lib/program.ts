@@ -9,10 +9,96 @@ import { bcs } from '@mysten/sui/bcs'
 import { formatType } from './format'
 import {
   usedResults,
+  typeVarName,
+  namedInputType,
   type TxArgument,
   type TxCommand,
   type TxInput,
 } from './transaction'
+
+/** Variable names for a PTB's object inputs and command results. */
+export interface ProgramNames {
+  /** Object-input index → name (`coin_sui`, `kiosk`, …). */
+  inputs: Map<number, string>
+  /** Command index → its result binding's name. */
+  results: Map<number, string>
+}
+
+/**
+ * Name a PTB's object inputs and command results from their types — snake_case
+ * of each one's struct (`coin_sui`, `kiosk`, …; see `typeVarName`), numbered when
+ * a name recurs. Inputs and results share one namespace so no two bindings
+ * collide; a result whose return type can't be resolved falls back to `resN`.
+ */
+export function programVarNames(
+  commands: TxCommand[],
+  inputs: TxInput[],
+): ProgramNames {
+  const inferredPure = inferPureTypes(commands, inputs)
+  const resolved = resolveTypeArguments(commands, inputs, inferredPure)
+  const used = usedResults(commands)
+
+  const inputBase = new Map<number, string>()
+  inputs.forEach((inp, i) => {
+    const name = typeVarName(namedInputType(inp))
+    if (name) inputBase.set(i, name)
+  })
+  const resultBase = new Map<number, string>()
+  commands.forEach((cmd, i) => {
+    if (!used.has(i)) return
+    const name = typeVarName(
+      resultType(cmd, i, inputs, inferredPure, commands, resolved),
+    )
+    // `res_` prefix marks it as a command result (vs an input), matching the
+    // `resN` fallback for results whose type doesn't resolve.
+    if (name) resultBase.set(i, `res_${name}`)
+  })
+
+  // Number any base used more than once across inputs *and* results.
+  const counts = new Map<string, number>()
+  for (const n of [...inputBase.values(), ...resultBase.values()]) {
+    counts.set(n, (counts.get(n) ?? 0) + 1)
+  }
+  const seen = new Map<string, number>()
+  const numbered = (base: string) => {
+    if ((counts.get(base) ?? 0) <= 1) return base
+    const n = (seen.get(base) ?? 0) + 1
+    seen.set(base, n)
+    return `${base}${n}`
+  }
+  const names: ProgramNames = { inputs: new Map(), results: new Map() }
+  inputBase.forEach((base, i) => names.inputs.set(i, numbered(base)))
+  resultBase.forEach((base, i) => names.results.set(i, numbered(base)))
+  return names
+}
+
+/** The type a command's whole result carries — `return[0]` for a MoveCall, the
+ * coin type for a split, the fixed types for publish/upgrade — or null. */
+function resultType(
+  cmd: TxCommand,
+  i: number,
+  inputs: TxInput[],
+  inferredPure: Map<number, string>,
+  commands: TxCommand[],
+  resolved: Map<number, string[]>,
+): string | null {
+  if (cmd.__typename === 'SplitCoinsCommand') {
+    return concreteArgType(cmd.coin, inputs, inferredPure, commands, resolved)
+  }
+  return concreteArgType(
+    { __typename: 'TxResult', cmd: i, ix: null },
+    inputs,
+    inferredPure,
+    commands,
+    resolved,
+  )
+}
+
+/** A result reference for the script / SDK forms (`name` or `name[ix]`). */
+function resultText(names: ProgramNames, cmd: number, ix: number | null): string {
+  const name = names.results.get(cmd) ?? `res${cmd}`
+  return ix == null ? name : `${name}[${ix}]`
+}
 
 /**
  * Render the programmable block as compact pseudo-Move script, inlining each
@@ -24,16 +110,41 @@ export function programToText(commands: TxCommand[], inputs: TxInput[]): string 
   const inferredPure = inferPureTypes(commands, inputs)
   const typeArgsByCmd = resolveTypeArguments(commands, inputs, inferredPure)
   const used = usedResults(commands)
-  return commands
-    .map(
-      (cmd, i) =>
-        `${used.has(i) ? `let res${i} = ` : ''}${callText(cmd, inputs, typeArgsByCmd.get(i))};`,
-    )
-    .join('\n')
+  const names = programVarNames(commands, inputs)
+  // Declare each named (object) input up front so the statements read by name;
+  // pure values stay inlined at their argument position.
+  const decls = inputs.flatMap((inp, i) => {
+    const name = names.inputs.get(i)
+    return name ? [`${name} = ${objectAddr(inp)};`] : []
+  })
+  const stmts = commands.map(
+    (cmd, i) =>
+      `${used.has(i) ? `${resultText(names, i, null)} = ` : ''}${callText(cmd, inputs, names, typeArgsByCmd.get(i))};`,
+  )
+  return [...decls, ...(decls.length ? [''] : []), ...stmts].join('\n')
 }
 
-function callText(cmd: TxCommand, inputs: TxInput[], typeArgs?: string[]): string {
-  const list = (args: TxArgument[]) => args.map((a) => argText(a, inputs)).join(', ')
+/** The on-chain id backing an object input — the value for its declaration. */
+function objectAddr(inp: TxInput): string {
+  switch (inp.__typename) {
+    case 'OwnedOrImmutable':
+    case 'Receiving':
+      return inp.object.address
+    case 'SharedInput':
+      return inp.address
+    default:
+      return ''
+  }
+}
+
+function callText(
+  cmd: TxCommand,
+  inputs: TxInput[],
+  names: ProgramNames,
+  typeArgs?: string[],
+): string {
+  const list = (args: TxArgument[]) =>
+    args.map((a) => argText(a, inputs, names)).join(', ')
   switch (cmd.__typename) {
     case 'MoveCallCommand': {
       const fn = cmd.function
@@ -44,32 +155,42 @@ function callText(cmd: TxCommand, inputs: TxInput[], typeArgs?: string[]): strin
       return `${target}${ta}(${list(cmd.arguments)})`
     }
     case 'SplitCoinsCommand':
-      return `split_coins(${argText(cmd.coin, inputs)}, [${list(cmd.amounts)}])`
+      return `split_coins(${argText(cmd.coin, inputs, names)}, [${list(cmd.amounts)}])`
     case 'MergeCoinsCommand':
-      return `merge_coins(${argText(cmd.coin, inputs)}, [${list(cmd.coins)}])`
+      return `merge_coins(${argText(cmd.coin, inputs, names)}, [${list(cmd.coins)}])`
     case 'TransferObjectsCommand':
-      return `transfer_objects([${list(cmd.inputs)}], ${argText(cmd.address, inputs)})`
+      return `transfer_objects([${list(cmd.inputs)}], ${argText(cmd.address, inputs, names)})`
     case 'MakeMoveVecCommand':
       return `make_move_vec${cmd.type ? `<${cmd.type.repr}>` : ''}([${list(cmd.elements)}])`
     case 'PublishCommand':
       return `publish(/* ${cmd.modules.length} module${cmd.modules.length === 1 ? '' : 's'}, ${cmd.dependencies.length} deps */)`
     case 'UpgradeCommand':
-      return `upgrade(${cmd.currentPackage}, ${argText(cmd.upgradeTicket, inputs)})`
+      return `upgrade(${cmd.currentPackage}, ${argText(cmd.upgradeTicket, inputs, names)})`
   }
 }
 
-function argText(arg: TxArgument, inputs: TxInput[]): string {
+function argText(
+  arg: TxArgument,
+  inputs: TxInput[],
+  names: ProgramNames,
+): string {
   switch (arg.__typename) {
     case 'GasCoin':
       return 'gas'
     case 'TxResult':
-      return arg.ix == null ? `res${arg.cmd}` : `res${arg.cmd}[${arg.ix}]`
+      return resultText(names, arg.cmd, arg.ix)
     case 'Input':
-      return inputText(inputs[arg.ix], arg.ix)
+      return inputText(inputs[arg.ix], arg.ix, names.inputs)
   }
 }
 
-function inputText(input: TxInput | undefined, ix: number): string {
+function inputText(
+  input: TxInput | undefined,
+  ix: number,
+  inputNames: Map<number, string>,
+): string {
+  const name = inputNames.get(ix)
+  if (name) return name
   if (!input) return `input${ix}`
   switch (input.__typename) {
     case 'Pure':
@@ -111,17 +232,19 @@ export function buildSdkProgram(commands: TxCommand[], inputs: TxInput[]): strin
   const typeArgsByCmd = resolveTypeArguments(commands, inputs, inferredPure)
 
   const used = usedResults(commands)
+  const names = programVarNames(commands, inputs)
 
   const decls = inputs.map((inp, i) => {
+    const varName = names.inputs.get(i) ?? `input${i}`
     const comment = inputComment(inp)
-    return `const input${i} = ${inputExpr(inp, inferredPure.get(i))};${
+    return `const ${varName} = ${inputExpr(inp, inferredPure.get(i))};${
       comment ? ` // ${comment}` : ''
     }`
   })
 
   const stmts = commands.map(
     (cmd, i) =>
-      `${used.has(i) ? `const res${i} = ` : ''}${sdkCommand(cmd, typeArgsByCmd.get(i))};`,
+      `${used.has(i) ? `const ${resultText(names, i, null)} = ` : ''}${sdkCommand(cmd, names, typeArgsByCmd.get(i))};`,
   )
 
   return [
@@ -134,19 +257,23 @@ export function buildSdkProgram(commands: TxCommand[], inputs: TxInput[]): strin
 
 const q = (s: string) => `'${s}'`
 
-function sdkArg(arg: TxArgument): string {
+function sdkArg(arg: TxArgument, names: ProgramNames): string {
   switch (arg.__typename) {
     case 'GasCoin':
       return 'tx.gas'
     case 'TxResult':
-      return arg.ix == null ? `res${arg.cmd}` : `res${arg.cmd}[${arg.ix}]`
+      return resultText(names, arg.cmd, arg.ix)
     case 'Input':
-      return `input${arg.ix}`
+      return names.inputs.get(arg.ix) ?? `input${arg.ix}`
   }
 }
 
-function sdkCommand(cmd: TxCommand, typeArgs?: string[]): string {
-  const list = (args: TxArgument[]) => args.map(sdkArg).join(', ')
+function sdkCommand(
+  cmd: TxCommand,
+  names: ProgramNames,
+  typeArgs?: string[],
+): string {
+  const list = (args: TxArgument[]) => args.map((a) => sdkArg(a, names)).join(', ')
   switch (cmd.__typename) {
     case 'MoveCallCommand': {
       const fn = cmd.function
@@ -164,11 +291,11 @@ function sdkCommand(cmd: TxCommand, typeArgs?: string[]): string {
       return lines.join('\n')
     }
     case 'SplitCoinsCommand':
-      return `tx.splitCoins(${sdkArg(cmd.coin)}, [${list(cmd.amounts)}])`
+      return `tx.splitCoins(${sdkArg(cmd.coin, names)}, [${list(cmd.amounts)}])`
     case 'MergeCoinsCommand':
-      return `tx.mergeCoins(${sdkArg(cmd.coin)}, [${list(cmd.coins)}])`
+      return `tx.mergeCoins(${sdkArg(cmd.coin, names)}, [${list(cmd.coins)}])`
     case 'TransferObjectsCommand':
-      return `tx.transferObjects([${list(cmd.inputs)}], ${sdkArg(cmd.address)})`
+      return `tx.transferObjects([${list(cmd.inputs)}], ${sdkArg(cmd.address, names)})`
     case 'MakeMoveVecCommand':
       return `tx.makeMoveVec({ ${cmd.type ? `type: '${cmd.type.repr}', ` : ''}elements: [${list(cmd.elements)}] })`
     case 'PublishCommand':
@@ -184,7 +311,7 @@ function sdkCommand(cmd: TxCommand, typeArgs?: string[]): string {
         `  modules: [${cmd.modules.map(q).join(', ')}],`,
         `  dependencies: [${cmd.dependencies.map(q).join(', ')}],`,
         `  package: ${q(cmd.currentPackage)},`,
-        `  ticket: ${sdkArg(cmd.upgradeTicket)},`,
+        `  ticket: ${sdkArg(cmd.upgradeTicket, names)},`,
         '})',
       ].join('\n')
   }
@@ -562,11 +689,12 @@ export function buildCliProgram(commands: TxCommand[], inputs: TxInput[]): strin
   const inferredPure = inferPureTypes(commands, inputs)
   const typeArgsByCmd = resolveTypeArguments(commands, inputs, inferredPure)
   const used = usedResults(commands)
+  const names = programVarNames(commands, inputs)
 
   const flags: string[] = []
   commands.forEach((cmd, i) => {
-    flags.push(cliCommand(cmd, typeArgsByCmd.get(i), inputs, inferredPure))
-    if (used.has(i)) flags.push(`--assign res${i}`)
+    flags.push(cliCommand(cmd, typeArgsByCmd.get(i), inputs, inferredPure, names))
+    if (used.has(i)) flags.push(`--assign ${names.results.get(i) ?? `res${i}`}`)
   })
 
   return ['sui client ptb', ...flags.map((f) => `  ${f}`)].join(' \\\n')
@@ -582,8 +710,9 @@ function cliCommand(
   typeArgs: string[] | undefined,
   inputs: TxInput[],
   inferredPure: Map<number, string>,
+  names: ProgramNames,
 ): string {
-  const a = (arg: TxArgument) => cliArg(arg, inputs, inferredPure)
+  const a = (arg: TxArgument) => cliArg(arg, inputs, inferredPure, names)
   const arr = (args: TxArgument[]) => shellToken(`[${args.map(a).join(', ')}]`)
   switch (cmd.__typename) {
     case 'MoveCallCommand': {
@@ -615,12 +744,15 @@ function cliArg(
   arg: TxArgument,
   inputs: TxInput[],
   inferredPure: Map<number, string>,
+  names: ProgramNames,
 ): string {
   switch (arg.__typename) {
     case 'GasCoin':
       return 'gas'
-    case 'TxResult':
-      return arg.ix == null ? `res${arg.cmd}` : `res${arg.cmd}.${arg.ix}`
+    case 'TxResult': {
+      const n = names.results.get(arg.cmd) ?? `res${arg.cmd}`
+      return arg.ix == null ? n : `${n}.${arg.ix}`
+    }
     case 'Input':
       return cliInput(inputs[arg.ix], inferredPure.get(arg.ix))
   }

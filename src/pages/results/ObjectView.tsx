@@ -14,6 +14,7 @@ import {
   fetchObject,
   fetchDisplayDefinition,
   fetchTypeDefinition,
+  describeOwner,
   type SuiObject,
 } from '@/lib/object'
 import { ResultHeader } from './ResultHeader'
@@ -354,7 +355,11 @@ function MoveObjectBody({
       {upgradeCap && <UpgradeCapPanel cap={upgradeCap} />}
 
       {hasHistory && (
-        <ObjectHistory id={data.address} currentVersion={data.version} />
+        <ObjectHistory
+          id={data.address}
+          currentVersion={data.version}
+          showOwners={!!describeOwner(data.owner).address}
+        />
       )}
 
       <div className={live ? 'grid grid-cols-1 gap-6 lg:grid-cols-2' : undefined}>
@@ -450,7 +455,13 @@ function MoveObjectBody({
         <>
           <Balances id={data.address} hideWhenEmpty />
           <OwnedObjects id={data.address} />
-          <ObjectTransactions id={data.address} currentVersion={data.version} />
+          <ObjectTransactions
+            id={data.address}
+            currentVersion={data.version}
+            // Only owned objects have a meaningful per-version owner timeline;
+            // shared/immutable ones don't change hands.
+            showOwners={!!describeOwner(data.owner).address}
+          />
         </>
       )}
     </div>

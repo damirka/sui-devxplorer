@@ -8,6 +8,9 @@
  */
 import { gqlRequest } from './graphql'
 import { escapeRegExp } from './format'
+import { fetchObjectTypes } from './object'
+import { mapBackwardPage, type Page, type PageArgs } from './pagination'
+import type { MoveFunctionSignature } from './move'
 import type { Network } from '@/context/network-context'
 
 const TRANSACTION_QUERY = `
@@ -141,14 +144,6 @@ fragment InputObjectFields on Object {
 }
 `
 
-const OBJECT_TYPES_QUERY = `
-query ObjectTypes($keys: [ObjectKey!]!) {
-  multiGetObjects(keys: $keys) {
-    address
-    asMoveObject { contents { type { repr } } }
-  }
-}
-`
 
 /** A reference an argument points at: the gas coin, an input, or a prior result. */
 export type TxArgument =
@@ -172,7 +167,7 @@ export type TxInput =
       address: string
       initialSharedVersion: number
       mutable: boolean
-      /** Resolved out-of-band via `multiGetObjects` — shared inputs don't expose it. */
+      /** Resolved out-of-band via `fetchObjectTypes` — shared inputs don't expose it. */
       type?: string | null
     }
   | { __typename: 'Receiving'; object: InputObject }
@@ -188,21 +183,10 @@ export type SystemTransactionKind =
   | 'EndOfEpochTransaction'
   | 'ProgrammableSystemTransaction'
 
-export interface MoveFn {
+/** The function a transaction's MoveCall targets — a Move function signature
+ *  plus where it's defined. */
+export interface MoveFn extends MoveFunctionSignature {
   module: { package: { address: string }; name: string }
-  name: string
-  isEntry: boolean | null
-  visibility: 'PUBLIC' | 'PRIVATE' | 'FRIEND' | null
-  /** Type parameters in declaration order; positional in reprs as `$0`, `$1`, … */
-  typeParameters: { constraints: string[] }[]
-  /**
-   * Parameter types in declaration order. A trailing `&TxContext` is part of
-   * the signature but supplied by the runtime, so `arguments` has one fewer
-   * entry — pair `arguments[i]` with `parameters[i]` and treat the remainder
-   * as runtime-provided.
-   */
-  parameters: { repr: string }[]
-  return: { repr: string }[]
 }
 
 export type TxCommand =
@@ -368,27 +352,6 @@ function commandTypeArguments(transactionJson: unknown): string[][] {
   })
 }
 
-/** Resolve `address → Move type repr` for a set of object ids in one query. */
-async function fetchObjectTypes(
-  network: Network,
-  addresses: string[],
-  signal?: AbortSignal,
-): Promise<Map<string, string | null>> {
-  const keys = addresses.map((address) => ({ address }))
-  const { data } = await gqlRequest<{
-    multiGetObjects: {
-      address: string
-      asMoveObject: { contents: { type: { repr: string } } | null } | null
-    }[]
-  }>(network, OBJECT_TYPES_QUERY, { keys }, signal)
-
-  const map = new Map<string, string | null>()
-  for (const o of data.multiGetObjects ?? []) {
-    map.set(o.address, o.asMoveObject?.contents?.type.repr ?? null)
-  }
-  return map
-}
-
 const MODULE_DISASSEMBLY_QUERY = `
 query ModuleDisassembly($package: SuiAddress!, $module: String!) {
   object(address: $package) {
@@ -482,6 +445,51 @@ export function inputType(input: TxInput): string | null {
   }
 }
 
+/** CamelCase / PascalCase → snake_case (`PersonalKioskCap` → `personal_kiosk_cap`;
+ * all-caps tokens collapse: `SUI` → `sui`, `USDC` → `usdc`). */
+export function snakeCase(name: string): string {
+  return name
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+}
+
+/**
+ * A variable name derived from a type repr — snake_case of its top-level struct
+ * (`…::PersonalKioskCap` → `personal_kiosk_cap`). `Coin<T>` and `Balance<T>` are
+ * special-cased to `coin_<sym>` / `balance_<sym>`, where `<sym>` is the inner
+ * coin type's name (`0x2::sui::SUI` → `sui`, `…::usdc::USDC` → `usdc`). Null when
+ * the repr isn't a struct (a primitive, `vector`, …).
+ */
+export function typeVarName(repr: string | null): string | null {
+  if (!repr) return null
+  const t = repr.trim()
+  const coinLike = /^0x0*2::(coin::Coin|balance::Balance)<(.+)>$/.exec(t)
+  if (coinLike) {
+    const kind = coinLike[1].endsWith('Coin') ? 'coin' : 'balance'
+    const innerStruct = coinLike[2].split('<', 1)[0].split('::').pop() ?? ''
+    return /^[A-Za-z]/.test(innerStruct) ? `${kind}_${snakeCase(innerStruct)}` : kind
+  }
+  const struct = t.split('<', 1)[0].split('::').pop() ?? ''
+  if (!/^[A-Za-z]/.test(struct)) return null
+  return snakeCase(struct)
+}
+
+/** The Move type of an *object* input (Owned/Shared/Receiving) — the only inputs
+ * we name. Pure values, decoded `MoveValue`s, and balance withdraws aren't named
+ * (they read better as their literal value), so they return null. */
+export function namedInputType(input: TxInput): string | null {
+  switch (input.__typename) {
+    case 'OwnedOrImmutable':
+    case 'Receiving':
+      return input.object.asMoveObject?.contents?.type.repr ?? null
+    case 'SharedInput':
+      return input.type ?? null
+    default:
+      return null
+  }
+}
+
 /** Every argument a command references, flattened in source order. */
 export function commandArguments(cmd: TxCommand): TxArgument[] {
   switch (cmd.__typename) {
@@ -531,6 +539,17 @@ export function failedCommandIndex(
   if (!m) return null
   const ordinal = Number(m[1])
   return ordinal >= 1 ? ordinal - 1 : null
+}
+
+/** The bytecode instruction offset an abort names (`… (instruction 57) …`) — the
+ * offset within the failed function, matching the disassembly's `\t57:` line —
+ * or null when the message doesn't carry one. */
+export function failedInstructionOffset(
+  message: string | null | undefined,
+): number | null {
+  if (!message) return null
+  const m = /\binstruction (\d+)\b/i.exec(message)
+  return m ? Number(m[1]) : null
 }
 
 /** Net gas used = computation + storage − rebate (in MIST). `null` if unknown. */
@@ -584,12 +603,6 @@ export interface TxListItem {
   timestamp: string | null
 }
 
-export interface TxListPage {
-  transactions: TxListItem[]
-  hasNextPage: boolean
-  endCursor: string | null
-}
-
 interface TxListResult {
   transactions: {
     pageInfo: { hasPreviousPage: boolean; startCursor: string | null }
@@ -608,38 +621,29 @@ interface TxListResult {
  * any tx involving an address. Lightweight per-row summary (digest, kind,
  * sender, status, time); `first` is capped at 50 by the service.
  *
- * Results come newest-first. `after` is the cursor to the *older* page, and
- * `hasNextPage` means "there are older transactions" — the connection only
- * orders ascending, so we page backward from the end (see `TX_LIST_QUERY`) and
- * reverse each window.
+ * Results come newest-first (the `Page` is paged backward in time — its
+ * `endCursor` walks to the next, older page). `limit` is capped at 50 by the
+ * service.
  */
 export async function fetchTransactions(
   network: Network,
   filter: TxFilter,
-  opts: { first: number; after?: string | null },
+  args: PageArgs,
   signal?: AbortSignal,
-): Promise<TxListPage> {
+): Promise<Page<TxListItem>> {
   const { data } = await gqlRequest<TxListResult>(
     network,
     TX_LIST_QUERY,
-    { filter, last: opts.first, before: opts.after ?? null },
+    { filter, last: args.limit, before: args.cursor ?? null },
     signal,
   )
-  const conn = data.transactions
-  return {
-    // The window is ascending (oldest→newest); reverse so newest is on top.
-    transactions: conn.nodes
-      .map((n) => ({
-        digest: n.digest,
-        kind: n.kind?.__typename ?? null,
-        sender: n.sender?.address ?? null,
-        status: n.effects?.status ?? null,
-        timestamp: n.effects?.timestamp ?? null,
-      }))
-      .reverse(),
-    hasNextPage: conn.pageInfo.hasPreviousPage,
-    endCursor: conn.pageInfo.startCursor,
-  }
+  return mapBackwardPage(data.transactions, (n) => ({
+    digest: n.digest,
+    kind: n.kind?.__typename ?? null,
+    sender: n.sender?.address ?? null,
+    status: n.effects?.status ?? null,
+    timestamp: n.effects?.timestamp ?? null,
+  }))
 }
 
 /* ───────────────────────────── signer scheme ───────────────────────────── */

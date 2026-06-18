@@ -1,11 +1,14 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AtSign, Coins, Images, KeyRound, Loader2, Stamp, X } from 'lucide-react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
-import { Pager, useCursorPager } from '@/components/ui/Pager'
+import { Pager, usePagedList } from '@/components/ui/Pager'
+import { DataList } from '@/components/ui/DataList'
 import { RowIndex } from '@/components/ui/RowIndex'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { ErrorText } from '@/components/ui/ErrorText'
 import { Badge } from '@/components/ui/Badge'
+import { CoinIcon } from '@/components/ui/CoinIcon'
 import { LinkedHash, TypeLink } from '@/components/ui/links'
 import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
@@ -14,10 +17,18 @@ import {
   fetchOwnedPublishers,
   fetchOwnedUpgradeCaps,
   type OwnedObject,
+  type OwnedPublisher,
+  type OwnedUpgradeCapNode,
 } from '@/lib/object'
+import { emptyPage } from '@/lib/pagination'
+import {
+  fetchCoinMetadata,
+  fetchCoinObjectBalances,
+  type CoinMeta,
+} from '@/lib/coin'
 import { resolveMvrType } from '@/lib/mvr'
 import { isUpgradeCapType } from '@/lib/upgradeCap'
-import { formatType } from '@/lib/format'
+import { formatType, formatTokenAmount } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import type { Network } from '@/context/network-context'
 import {
@@ -220,6 +231,153 @@ function QuickFilter({
   )
 }
 
+/** Sort owned objects by a string key, then by address — so like objects group
+ *  while staying stable. */
+function sortOwned(
+  objs: OwnedObject[],
+  key: (o: OwnedObject) => string,
+): OwnedObject[] {
+  return [...objs].sort(
+    (a, b) => key(a).localeCompare(key(b)) || a.address.localeCompare(b.address),
+  )
+}
+
+/** A scan-sourced row: object id → the (clickable) type it carries, with an
+ *  optional inline badge (`extra`) and a right-aligned `trailing` slot (e.g. a
+ *  coin value). Shared by the capabilities / coins / displays views, which
+ *  differ only in which type they surface and what trails it. */
+function OwnedScanRow({
+  index,
+  address,
+  type,
+  extra,
+  trailing,
+}: {
+  index: number
+  address: string
+  type: string | null
+  extra?: ReactNode
+  trailing?: ReactNode
+}) {
+  return (
+    <li className="flex items-start gap-3 py-2.5">
+      <RowIndex n={index} />
+      <span className="shrink-0">
+        <LinkedHash value={address} />
+      </span>
+      {type && (
+        <span className="text-muted flex min-w-0 flex-1 items-center gap-2 break-all">
+          <TypeLink type={type} />
+          {extra}
+        </span>
+      )}
+      {trailing}
+    </li>
+  )
+}
+
+/** A coin object's value as the row's trailing chip: its icon + the formatted
+ *  amount. Nothing until the balance has loaded. */
+function coinValueNode(info: { value: string | null; meta?: CoinMeta }): ReactNode {
+  if (info.value == null) return undefined
+  return (
+    <span
+      className="text-text inline-flex shrink-0 items-center gap-1.5 tabular-nums"
+      title="coin value"
+    >
+      <CoinIcon url={info.meta?.iconUrl} symbol={info.meta?.symbol} className="h-4 w-4" />
+      {info.value}
+    </span>
+  )
+}
+
+/**
+ * Per-object coin values for a list of owned objects: each coin object's raw
+ * balance (by id) plus its coin metadata (decimals/symbol/icon), returned as a
+ * lookup `object → { value, meta }`. Reuses the same scaling as the Balances
+ * panel; `value` is `null` for non-coins and until that object's balance loads.
+ *
+ * The caches *accumulate* — only ids/types not seen yet are fetched, and results
+ * merge in. That matters for the COINS quick filter, whose object set grows as
+ * the background ownership scan pages in: values appear incrementally and never
+ * blank out (a plain refetch-on-change would clear them on every scan tick).
+ */
+function useCoinValues(
+  network: Network,
+  objects: OwnedObject[],
+): (o: OwnedObject) => { value: string | null; meta?: CoinMeta } {
+  const [balances, setBalances] = useState<Map<string, string>>(() => new Map())
+  const [meta, setMeta] = useState<Map<string, CoinMeta>>(() => new Map())
+
+  // Caches are network-scoped — drop them when the network changes.
+  useEffect(() => {
+    setBalances(new Map())
+    setMeta(new Map())
+  }, [network])
+
+  const ids = useMemo(
+    () => objects.filter((o) => coinInnerType(o.type)).map((o) => o.address),
+    [objects],
+  )
+  const innerTypes = useMemo(
+    () => [
+      ...new Set(
+        objects.map((o) => coinInnerType(o.type)).filter((t): t is string => !!t),
+      ),
+    ],
+    [objects],
+  )
+
+  // Fetch only the balances we don't already hold, then merge them in.
+  const missingBalanceIds = ids.filter((id) => !balances.has(id))
+  const missingBalanceKey = missingBalanceIds.join(',')
+  useEffect(() => {
+    if (!missingBalanceKey) return
+    const controller = new AbortController()
+    fetchCoinObjectBalances(network, missingBalanceKey.split(','), controller.signal)
+      .then((m) => {
+        if (!controller.signal.aborted && m.size) {
+          setBalances((prev) => new Map([...prev, ...m]))
+        }
+      })
+      .catch(() => {})
+    return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [network, missingBalanceKey])
+
+  // Same for metadata, keyed by coin type.
+  const missingTypes = innerTypes.filter((t) => !meta.has(t))
+  const missingTypesKey = missingTypes.join(',')
+  useEffect(() => {
+    if (!missingTypesKey) return
+    const controller = new AbortController()
+    fetchCoinMetadata(network, missingTypesKey.split(','), controller.signal)
+      .then((m) => {
+        if (!controller.signal.aborted && m.size) {
+          setMeta((prev) => new Map([...prev, ...m]))
+        }
+      })
+      .catch(() => {})
+    return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [network, missingTypesKey])
+
+  return (o: OwnedObject) => {
+    const inner = coinInnerType(o.type)
+    if (!inner) return { value: null }
+    const m = meta.get(inner)
+    const raw = balances.get(o.address)
+    // No registered metadata → show the grouped raw integer (decimals = 0).
+    const value =
+      raw == null
+        ? null
+        : m
+          ? formatTokenAmount(raw, m.decimals, m.symbol)
+          : formatTokenAmount(raw, 0)
+    return { value, meta: m }
+  }
+}
+
 function OwnedList({
   network,
   id,
@@ -245,139 +403,104 @@ function OwnedList({
   const showDisplays = filter?.kind === 'displays'
   const showPublishers = filter?.kind === 'publishers'
   const typeFilter = filter?.kind === 'type' ? filter.type : null
-
-  // Pager key carries the active view so switching filters resets pagination.
-  const pager = useCursorPager(
-    `${network}|${id}|${typeFilter ?? filter?.kind ?? ''}`,
-  )
   // UpgradeCaps get the richer cap formatting (governed package + policy) used
-  // by the "UpgradeCaps held" panel — which needs each object's `contents.json`,
-  // a different fetch than the plain owned-objects list.
+  // by the "UpgradeCaps held" panel — a different fetch (it needs contents.json).
   const caps = !!typeFilter && isUpgradeCapType(typeFilter)
+  // Capabilities / coins / displays come straight from the in-memory ownership
+  // scan; only the type-filtered, cap, and publisher views hit the server.
+  const fetched = !!typeFilter || showPublishers
 
-  const page = useAsync(
-    (signal) =>
-      typeFilter && !caps
-        ? fetchOwnedPage(
-            network,
-            id,
-            { first: pager.pageSize, after: pager.after, type: typeFilter, display: true },
-            signal,
-          )
-        : Promise.resolve(null),
-    [network, id, pager.pageSize, pager.after, typeFilter, caps],
-  )
-  const capPage = useAsync(
-    (signal) =>
-      caps
-        ? fetchOwnedUpgradeCaps(
-            network,
-            id,
-            { first: pager.pageSize, after: pager.after },
-            signal,
-          )
-        : Promise.resolve(null),
-    [network, id, pager.pageSize, pager.after, caps],
-  )
-  // Publishers need `contents.json` (package + module), not Display — its own
-  // server fetch, paginated like the cap list.
-  const pubPage = useAsync(
-    (signal) =>
-      showPublishers
-        ? fetchOwnedPublishers(
-            network,
-            id,
-            { first: pager.pageSize, after: pager.after },
-            signal,
-          )
-        : Promise.resolve(null),
-    [network, id, pager.pageSize, pager.after, showPublishers],
+  // One paginated fetch, switched by the active view. The pager key carries the
+  // view, so switching filters resets pagination (and clears the prior result,
+  // keeping the union-typed `items` honest to the current branch).
+  const list = usePagedList<OwnedObject | OwnedUpgradeCapNode | OwnedPublisher>(
+    `${network}|${id}|${typeFilter ?? filter?.kind ?? ''}`,
+    (args, signal) => {
+      if (showPublishers) return fetchOwnedPublishers(network, id, args, signal)
+      if (caps) return fetchOwnedUpgradeCaps(network, id, args, signal)
+      if (typeFilter)
+        return fetchOwnedPage(
+          network,
+          id,
+          { ...args, type: typeFilter, display: true },
+          signal,
+        )
+      return Promise.resolve(emptyPage())
+    },
+    { enabled: fetched },
   )
 
-  const capRows = toCapRows(capPage.data?.caps ?? [])
+  // Cap rows + their MVR names. The names hook must run every render, so derive
+  // from a (possibly empty) list when the cap view isn't the active one.
+  const capRows = toCapRows(caps ? (list.items as OwnedUpgradeCapNode[]) : [])
   const capNames = useUpgradeCapPackageNames(network, capRows)
 
-  const active = showPublishers ? pubPage : caps ? capPage : page
-  const hasNext = showPublishers
-    ? pubPage.data?.hasNextPage
-    : caps
-      ? capPage.data?.hasNextPage
-      : page.data?.hasNextPage
-  const endCursor =
-    (showPublishers
-      ? pubPage.data?.endCursor
-      : caps
-        ? capPage.data?.endCursor
-        : page.data?.endCursor) ?? null
+  // Scan-sourced rows, grouped so like objects sit together.
+  const capabilityRows = sortOwned(capabilities, (o) => o.type ?? '')
+  const coinRows = sortOwned(coins, (o) => coinInnerType(o.type) ?? '')
+  // Displays: newer registry Displays first, then legacy, each by displayed type.
+  const displayRows = [...displays].sort((a, b) => {
+    const da = displayInner(a.type)
+    const db = displayInner(b.type)
+    return (
+      Number(da?.legacy ?? false) - Number(db?.legacy ?? false) ||
+      (da?.inner ?? '').localeCompare(db?.inner ?? '') ||
+      a.address.localeCompare(b.address)
+    )
+  })
 
-  // Capability rows come straight from the scan (already in memory) — grouped by
-  // type so like caps sit together.
-  const capabilityRows = showCaps
-    ? [...capabilities].sort(
-        (a, b) =>
-          (a.type ?? '').localeCompare(b.type ?? '') ||
-          a.address.localeCompare(b.address),
-      )
-    : []
+  // Coin views — the COINS quick filter, or a selected `Coin<T>` type — show
+  // each object's value; other views just show id + type. The value lookup runs
+  // over whichever coin objects are on screen.
+  const coinTypeFilter = !!typeFilter && coinInnerType(typeFilter) != null
+  const displayedCoins: OwnedObject[] = showCoins
+    ? coinRows
+    : coinTypeFilter
+      ? (list.items as OwnedObject[])
+      : []
+  const coinValue = useCoinValues(network, displayedCoins)
 
-  // Coin rows from the scan, sorted by inner coin type so like coins group.
-  const coinRows = showCoins
-    ? [...coins].sort(
-        (a, b) =>
-          (coinInnerType(a.type) ?? '').localeCompare(coinInnerType(b.type) ?? '') ||
-          a.address.localeCompare(b.address),
-      )
-    : []
+  const sectionLabel = showCaps
+    ? 'Capabilities'
+    : showCoins
+      ? 'Coins'
+      : showDisplays
+        ? 'Displays'
+        : showPublishers
+          ? 'Publishers'
+          : 'Owned objects'
 
-  // Display rows from the scan — newer registry Displays first, then legacy,
-  // each group sorted by the displayed type.
-  const displayRows = showDisplays
-    ? [...displays].sort((a, b) => {
-        const da = displayInner(a.type)
-        const db = displayInner(b.type)
-        return (
-          Number(da?.legacy ?? false) - Number(db?.legacy ?? false) ||
-          (da?.inner ?? '').localeCompare(db?.inner ?? '') ||
-          a.address.localeCompare(b.address)
-        )
-      })
-    : []
+  // Row count shown for the in-memory views; the pager drives the fetched ones.
+  const scanCount = showCaps
+    ? capabilityRows.length
+    : showCoins
+      ? coinRows.length
+      : showDisplays
+        ? displayRows.length
+        : null
+
+  // The clear-filter chip: the trimmed type for a type filter (full id in the
+  // tooltip), otherwise the synthetic view's name.
+  const chipLabel = typeFilter
+    ? formatType(typeFilter)
+    : showCaps
+      ? 'capabilities'
+      : showCoins
+        ? 'coins'
+        : showDisplays
+          ? 'displays'
+          : 'publishers'
+  const chipTitle = typeFilter ?? chipLabel
 
   return (
     <Panel className="min-w-0">
       <PanelSection
-        label={
-          showCaps
-            ? 'Capabilities'
-            : showCoins
-              ? 'Coins'
-              : showDisplays
-                ? 'Displays'
-                : showPublishers
-                  ? 'Publishers'
-                  : 'Owned objects'
-        }
+        label={sectionLabel}
         action={
-          typeFilter || showPublishers ? (
-            <Pager
-              pageIndex={pager.pageIndex}
-              pageSize={pager.pageSize}
-              onPageSize={pager.setPageSize}
-              hasNext={!!hasNext}
-              onPrev={pager.prev}
-              onNext={() => pager.next(endCursor)}
-              label="objects"
-            />
-          ) : showCaps ? (
-            <span className="text-muted font-mono text-xs">
-              {capabilityRows.length}
-            </span>
-          ) : showCoins ? (
-            <span className="text-muted font-mono text-xs">{coinRows.length}</span>
-          ) : showDisplays ? (
-            <span className="text-muted font-mono text-xs">
-              {displayRows.length}
-            </span>
+          fetched ? (
+            list.paged ? <Pager {...list.pagerProps} label="objects" /> : undefined
+          ) : scanCount != null ? (
+            <span className="text-muted font-mono text-xs">{scanCount}</span>
           ) : undefined
         }
       >
@@ -386,109 +509,81 @@ function OwnedList({
             pick a quick filter, or select a type from the list, to list the
             objects owned here.
           </EmptyState>
-        ) : showCaps ? (
+        ) : (
           <>
-            <FilterChip
-              label="capabilities"
-              title="capabilities"
-              onClear={onClearFilter}
-            />
-            {capabilityRows.length > 0 ? (
-              <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
-                {capabilityRows.map((o, i) => (
-                  <li
+            <FilterChip label={chipLabel} title={chipTitle} onClear={onClearFilter} />
+
+            {showCaps ? (
+              <DataList
+                loading={false}
+                error={null}
+                items={capabilityRows}
+                empty="no capabilities held."
+                scroll
+              >
+                {(o, i) => (
+                  <OwnedScanRow
                     key={o.address}
-                    className="flex items-start gap-3 py-2.5"
-                  >
-                    <RowIndex n={i + 1} />
-                    <span className="shrink-0">
-                      <LinkedHash value={o.address} />
-                    </span>
-                    {o.type && (
-                      <span className="text-muted min-w-0 flex-1 break-all">
-                        <TypeLink type={o.type} />
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <span className="text-muted text-sm">no capabilities held.</span>
-            )}
-          </>
-        ) : showCoins ? (
-          <>
-            <FilterChip label="coins" title="coins" onClear={onClearFilter} />
-            {coinRows.length > 0 ? (
-              <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
-                {coinRows.map((o, i) => {
-                  const inner = coinInnerType(o.type)
-                  return (
-                    <li key={o.address} className="flex items-start gap-3 py-2.5">
-                      <RowIndex n={i + 1} />
-                      <span className="shrink-0">
-                        <LinkedHash value={o.address} />
-                      </span>
-                      {inner && (
-                        <span className="text-muted min-w-0 flex-1 break-all">
-                          <TypeLink type={inner} />
-                        </span>
-                      )}
-                    </li>
-                  )
-                })}
-              </ul>
-            ) : (
-              <span className="text-muted text-sm">no coins held.</span>
-            )}
-          </>
-        ) : showDisplays ? (
-          <>
-            <FilterChip label="displays" title="displays" onClear={onClearFilter} />
-            {displayRows.length > 0 ? (
-              <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
-                {displayRows.map((o, i) => {
+                    index={i + 1}
+                    address={o.address}
+                    type={o.type}
+                  />
+                )}
+              </DataList>
+            ) : showCoins ? (
+              <DataList
+                loading={false}
+                error={null}
+                items={coinRows}
+                empty="no coins held."
+                scroll
+              >
+                {(o, i) => (
+                  <OwnedScanRow
+                    key={o.address}
+                    index={i + 1}
+                    address={o.address}
+                    type={coinInnerType(o.type)}
+                    trailing={coinValueNode(coinValue(o))}
+                  />
+                )}
+              </DataList>
+            ) : showDisplays ? (
+              <DataList
+                loading={false}
+                error={null}
+                items={displayRows}
+                empty="no displays held."
+                scroll
+              >
+                {(o, i) => {
                   const d = displayInner(o.type)
                   return (
-                    <li key={o.address} className="flex items-start gap-3 py-2.5">
-                      <RowIndex n={i + 1} />
-                      <span className="shrink-0">
-                        <LinkedHash value={o.address} />
-                      </span>
-                      {d && (
-                        <span className="text-muted flex min-w-0 flex-1 items-center gap-2 break-all">
-                          <TypeLink type={d.inner} />
-                          {d.legacy && (
-                            <Badge tone="muted" className="shrink-0">
-                              legacy
-                            </Badge>
-                          )}
-                        </span>
-                      )}
-                    </li>
+                    <OwnedScanRow
+                      key={o.address}
+                      index={i + 1}
+                      address={o.address}
+                      type={d?.inner ?? null}
+                      extra={
+                        d?.legacy ? (
+                          <Badge tone="muted" className="shrink-0">
+                            legacy
+                          </Badge>
+                        ) : undefined
+                      }
+                    />
                   )
-                })}
-              </ul>
-            ) : (
-              <span className="text-muted text-sm">no displays held.</span>
-            )}
-          </>
-        ) : showPublishers ? (
-          <>
-            <FilterChip
-              label="publishers"
-              title="publishers"
-              onClear={onClearFilter}
-            />
-            {active.loading ? (
-              <SkeletonLines count={5} />
-            ) : active.error ? (
-              <span className="text-danger font-mono text-xs">
-                {active.error.message}
-              </span>
-            ) : pubPage.data && pubPage.data.publishers.length > 0 ? (
-              <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
-                {pubPage.data.publishers.map((p, i) => (
+                }}
+              </DataList>
+            ) : showPublishers ? (
+              <DataList
+                loading={list.loading}
+                error={list.error}
+                items={list.items as OwnedPublisher[]}
+                empty="no publishers held."
+                scroll
+              >
+                {(p, i) => (
                   <li
                     key={p.address}
                     className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5"
@@ -507,74 +602,66 @@ function OwnedList({
                       <span className="text-muted shrink-0">· {p.moduleName}</span>
                     )}
                   </li>
-                ))}
-              </ul>
-            ) : (
-              <span className="text-muted text-sm">no publishers held.</span>
-            )}
-          </>
-        ) : (
-          <>
-            <FilterChip
-              label={formatType(typeFilter!)}
-              title={typeFilter!}
-              onClear={onClearFilter}
-            />
-
-            {active.loading ? (
-              <SkeletonLines count={5} />
-            ) : active.error ? (
-              <span className="text-danger font-mono text-xs">
-                {active.error.message}
-              </span>
+                )}
+              </DataList>
             ) : caps ? (
-              capRows.length > 0 ? (
-                <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
-                  {capRows.map((r, i) => (
-                    <UpgradeCapRow
-                      key={r.id}
-                      row={r}
-                      mvrName={r.package ? capNames[r.package] : undefined}
-                      n={i + 1}
-                    />
-                  ))}
-                </ul>
-              ) : (
-                <span className="text-muted text-sm">
-                  no owned objects of this type.
-                </span>
-              )
-            ) : page.data && page.data.objects.length > 0 ? (
-              <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
-                {page.data.objects.map((o, i) => (
-                  <li key={o.address} className="flex items-center gap-3 py-2.5">
-                    <RowIndex n={i + 1} />
-                    <LinkedHash value={o.address} />
-                    {(o.name || o.description) && (
-                      <span
-                        className="min-w-0 flex-1 truncate"
-                        title={[o.name, o.description]
-                          .filter(Boolean)
-                          .join(' — ')}
-                      >
-                        {o.name && <span className="text-text">{o.name}</span>}
-                        {o.name && o.description && (
-                          <span className="text-muted"> · </span>
-                        )}
-                        {o.description && (
-                          <span className="text-muted">
-                            {clampText(o.description, 48)}
-                          </span>
-                        )}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
+              <DataList
+                loading={list.loading}
+                error={list.error}
+                items={capRows}
+                empty="no owned objects of this type."
+                scroll
+              >
+                {(r, i) => (
+                  <UpgradeCapRow
+                    key={r.id}
+                    row={r}
+                    mvrName={r.package ? capNames[r.package] : undefined}
+                    n={i + 1}
+                  />
+                )}
+              </DataList>
             ) : (
-              <span className="text-muted text-sm">
-                no owned objects of this type.
-              </span>
+              <DataList
+                loading={list.loading}
+                error={list.error}
+                items={list.items as OwnedObject[]}
+                empty="no owned objects of this type."
+                scroll
+              >
+                {(o, i) =>
+                  coinTypeFilter ? (
+                    <OwnedScanRow
+                      key={o.address}
+                      index={i + 1}
+                      address={o.address}
+                      type={coinInnerType(o.type)}
+                      trailing={coinValueNode(coinValue(o))}
+                    />
+                  ) : (
+                    <li key={o.address} className="flex items-center gap-3 py-2.5">
+                      <RowIndex n={i + 1} />
+                      <LinkedHash value={o.address} />
+                      {(o.name || o.description) && (
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          title={[o.name, o.description].filter(Boolean).join(' — ')}
+                        >
+                          {o.name && <span className="text-text">{o.name}</span>}
+                          {o.name && o.description && (
+                            <span className="text-muted"> · </span>
+                          )}
+                          {o.description && (
+                            <span className="text-muted">
+                              {clampText(o.description, 48)}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </li>
+                  )
+                }
+              </DataList>
             )}
           </>
         )}
@@ -650,10 +737,10 @@ function useOwnedTypeScan(network: Network, id: string): OwnedScan {
           const page = await fetchOwnedPage(
             network,
             id,
-            { first: 50, after },
+            { limit: 50, cursor: after },
             controller.signal,
           )
-          for (const o of page.objects) {
+          for (const o of page.items) {
             total++
             const t = o.type ?? '(unknown)'
             counts.set(t, (counts.get(t) ?? 0) + 1)
@@ -753,7 +840,7 @@ function TypesOwned({
         }
       >
         {error ? (
-          <span className="text-danger font-mono text-xs">{error}</span>
+          <ErrorText error={error} />
         ) : types.length > 0 ? (
           <>
             {/* Pre-built quick filters — one-click shortcuts to common holdings. */}

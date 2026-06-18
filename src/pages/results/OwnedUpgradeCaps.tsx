@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
-import { Pager, useCursorPager } from '@/components/ui/Pager'
+import { Pager, usePagedList } from '@/components/ui/Pager'
+import { DataList } from '@/components/ui/DataList'
+import { CollapseToggle } from '@/components/ui/CollapseToggle'
 import { RowIndex } from '@/components/ui/RowIndex'
-import { SkeletonLines } from '@/components/ui/Skeleton'
 import { LinkedHash, EntityLink } from '@/components/ui/links'
 import { Muted } from '@/components/ui/Field'
 import { useNetwork } from '@/context/useNetwork'
@@ -104,27 +104,17 @@ export function OwnedUpgradeCaps({
   hideWhenEmpty?: boolean
 }) {
   const { network } = useNetwork()
-  const pager = useCursorPager(`${network}|${id}`)
-  const { data, loading, error } = useAsync(
-    (signal) =>
-      fetchOwnedUpgradeCaps(
-        network,
-        id,
-        { first: pager.pageSize, after: pager.after },
-        signal,
-      ),
-    [network, id, pager.pageSize, pager.after],
+  const { items, loading, error, paged, pagerProps } = usePagedList(
+    `${network}|${id}`,
+    (args, signal) => fetchOwnedUpgradeCaps(network, id, args, signal),
   )
 
-  const rows = toCapRows(data?.caps ?? [])
+  const rows = toCapRows(items)
   const mvrNames = useUpgradeCapPackageNames(network, rows)
 
   const [open, setOpen] = useState(true)
 
-  // Hide pagination entirely when there's a single page of results.
-  const paged = pager.pageIndex > 0 || !!data?.hasNextPage
-
-  if (hideWhenEmpty && !loading && !error && data && rows.length === 0) {
+  if (hideWhenEmpty && !loading && !error && rows.length === 0) {
     return null
   }
 
@@ -132,54 +122,41 @@ export function OwnedUpgradeCaps({
     <Panel>
       <PanelSection
         label={
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            title={open ? 'collapse' : 'expand'}
-            className="hover:text-primary inline-flex items-center gap-1.5 transition-colors"
-          >
-            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            <span className="panel-label">UpgradeCaps held</span>
-          </button>
+          <CollapseToggle
+            open={open}
+            onToggle={() => setOpen((v) => !v)}
+            label="UpgradeCaps held"
+          />
         }
         action={
           // Pager only when expanded; the count stays visible either way so a
           // collapsed panel still tells you how many caps are held.
           open && paged ? (
-            <Pager
-              pageIndex={pager.pageIndex}
-              pageSize={pager.pageSize}
-              onPageSize={pager.setPageSize}
-              hasNext={!!data?.hasNextPage}
-              onPrev={pager.prev}
-              onNext={() => pager.next(data?.endCursor ?? null)}
-              label="upgrade caps"
-            />
+            <Pager {...pagerProps} label="upgrade caps" />
           ) : rows.length > 0 ? (
             <span className="text-muted font-mono text-xs">{rows.length}</span>
           ) : undefined
         }
       >
-        {open &&
-          (loading ? (
-            <SkeletonLines count={3} />
-          ) : error ? (
-            <span className="text-danger font-mono text-xs">{error.message}</span>
-          ) : rows.length > 0 ? (
-            <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
-              {rows.map((r, i) => (
-                <UpgradeCapRow
-                  key={r.id}
-                  row={r}
-                  mvrName={r.package ? mvrNames[r.package] : undefined}
-                  n={pager.pageIndex * pager.pageSize + i + 1}
-                />
-              ))}
-            </ul>
-          ) : (
-            <Muted>no UpgradeCaps held.</Muted>
-          ))}
+        {open && (
+          <DataList
+            loading={loading}
+            error={error}
+            items={rows}
+            empty={<Muted>no UpgradeCaps held.</Muted>}
+            skeleton={3}
+            scroll
+          >
+            {(r, i) => (
+              <UpgradeCapRow
+                key={r.id}
+                row={r}
+                mvrName={r.package ? mvrNames[r.package] : undefined}
+                n={pagerProps.pageIndex * pagerProps.pageSize + i + 1}
+              />
+            )}
+          </DataList>
+        )}
       </PanelSection>
     </Panel>
   )

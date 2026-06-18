@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
-import { Pager, useCursorPager } from '@/components/ui/Pager'
-import { SkeletonLines } from '@/components/ui/Skeleton'
+import { Pager, usePagedList } from '@/components/ui/Pager'
+import { DataList } from '@/components/ui/DataList'
+import { CollapseToggle } from '@/components/ui/CollapseToggle'
 import { TypeLink } from '@/components/ui/links'
 import { Muted } from '@/components/ui/Field'
 import { CoinIcon } from '@/components/ui/CoinIcon'
@@ -61,7 +61,6 @@ export function Balances({
   hideWhenEmpty?: boolean
 }) {
   const { network } = useNetwork()
-  const pager = useCursorPager(`${network}|${id}`)
   const [open, setOpen] = useState(true)
 
   // Always fetch the standard coins by exact type so they pin to the top no
@@ -75,10 +74,15 @@ export function Balances({
 
   // Everything else, server-ordered + paginated, with the standard coins
   // filtered out so they're not listed twice.
-  const { data: pageData, loading: pageLoading, error } = useAsync(
-    (signal) =>
-      fetchBalances(network, id, { first: pager.pageSize, after: pager.after }, signal),
-    [network, id, pager.pageSize, pager.after],
+  const {
+    items: pageBalances,
+    loading: pageLoading,
+    error,
+    paged,
+    pagerProps,
+  } = usePagedList(
+    `${network}|${id}`,
+    (args, signal) => fetchBalances(network, id, args, signal),
   )
   // Pin the standard coins, in STANDARD_TYPES order. Source them from the
   // dedicated by-type fetch (which reaches coins sitting deep in the paginated
@@ -89,7 +93,7 @@ export function Balances({
   for (const r of standard) {
     if (r.total !== '0') pinnedByType.set(r.coinType, r)
   }
-  for (const r of pageData?.balances ?? []) {
+  for (const r of pageBalances) {
     if (STANDARD_SET.has(r.coinType) && r.total !== '0' && !pinnedByType.has(r.coinType)) {
       pinnedByType.set(r.coinType, r)
     }
@@ -99,11 +103,12 @@ export function Balances({
   )
 
   // Everything else (non-standard, non-zero), in the service's order.
-  const rest = (pageData?.balances ?? []).filter(
+  const rest = pageBalances.filter(
     (r) => !STANDARD_SET.has(r.coinType) && r.total !== '0',
   )
   // Pin only on the first page; deeper pages are just the paginated remainder.
-  const rows: CoinBalance[] = pager.pageIndex === 0 ? [...pinned, ...rest] : rest
+  const rows: CoinBalance[] =
+    pagerProps.pageIndex === 0 ? [...pinned, ...rest] : rest
 
   const types = rows.map((r) => r.coinType)
   const { data: meta } = useAsync(
@@ -115,14 +120,13 @@ export function Balances({
   )
 
   const loading = standardLoading || pageLoading
-  const paged = pager.pageIndex > 0 || !!pageData?.hasNextPage
 
   if (
     hideWhenEmpty &&
     !loading &&
     !error &&
     rows.length === 0 &&
-    !pageData?.hasNextPage
+    !pagerProps.hasNext
   ) {
     return null
   }
@@ -131,95 +135,82 @@ export function Balances({
     <Panel>
       <PanelSection
         label={
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            title={open ? 'collapse' : 'expand'}
-            className="hover:text-primary inline-flex items-center gap-1.5 transition-colors"
-          >
-            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            <span className="panel-label">Balances</span>
-          </button>
+          <CollapseToggle
+            open={open}
+            onToggle={() => setOpen((v) => !v)}
+            label="Balances"
+          />
         }
         action={
           // Pager only when expanded; the count stays visible either way so a
           // collapsed panel still tells you how many coins are shown.
           open && paged ? (
-            <Pager
-              pageIndex={pager.pageIndex}
-              pageSize={pager.pageSize}
-              onPageSize={pager.setPageSize}
-              hasNext={!!pageData?.hasNextPage}
-              onPrev={pager.prev}
-              onNext={() => pager.next(pageData?.endCursor ?? null)}
-              label="coin types"
-            />
+            <Pager {...pagerProps} label="coin types" />
           ) : rows.length > 0 ? (
             <span className="text-muted font-mono text-xs">{rows.length}</span>
           ) : undefined
         }
       >
-        {open &&
-          (loading ? (
-            <SkeletonLines count={3} />
-          ) : error ? (
-            <span className="text-danger font-mono text-xs">{error.message}</span>
-          ) : rows.length > 0 ? (
-            <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
-              {rows.map((r) => {
-                const m = meta?.get(r.coinType)
-                const full = (raw: string) =>
-                  m ? formatTokenAmount(raw, m.decimals, m.symbol) : rawBalance(raw)
-                const bare = (raw: string) =>
-                  m ? formatTokenAmount(raw, m.decimals) : rawBalance(raw)
-                const hasCoins = r.inCoins !== '0'
-                const hasAddr = r.inAccumulator !== '0'
-                // Where this balance lives: classic `Coin<T>` objects, the
-                // address accumulator (the newer model), or a mix of both.
-                const source =
-                  hasCoins && hasAddr
-                    ? 'coins + accumulator'
-                    : hasAddr
-                      ? 'accumulator'
-                      : 'coins'
-                // Spell out the amounts only when it's genuinely split — the tag
-                // alone already says it all for a pure coin/address balance.
-                const mixed = hasCoins && hasAddr
-                return (
-                  <li
-                    key={r.coinType}
-                    className="flex items-start justify-between gap-3 py-2.5"
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <CoinIcon url={m?.iconUrl} symbol={m?.symbol} />
-                      <span className="min-w-0 break-all">
-                        <TypeLink type={r.coinType} />
-                      </span>
+        {open && (
+          <DataList
+            loading={loading}
+            error={error}
+            items={rows}
+            empty={<Muted>no coin balances.</Muted>}
+            skeleton={3}
+            scroll
+          >
+            {(r) => {
+              const m = meta?.get(r.coinType)
+              const full = (raw: string) =>
+                m ? formatTokenAmount(raw, m.decimals, m.symbol) : rawBalance(raw)
+              const bare = (raw: string) =>
+                m ? formatTokenAmount(raw, m.decimals) : rawBalance(raw)
+              const hasCoins = r.inCoins !== '0'
+              const hasAddr = r.inAccumulator !== '0'
+              // Where this balance lives: classic `Coin<T>` objects, the
+              // address accumulator (the newer model), or a mix of both.
+              const source =
+                hasCoins && hasAddr
+                  ? 'coins + accumulator'
+                  : hasAddr
+                    ? 'accumulator'
+                    : 'coins'
+              // Spell out the amounts only when it's genuinely split — the tag
+              // alone already says it all for a pure coin/address balance.
+              const mixed = hasCoins && hasAddr
+              return (
+                <li
+                  key={r.coinType}
+                  className="flex items-start justify-between gap-3 py-2.5"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <CoinIcon url={m?.iconUrl} symbol={m?.symbol} />
+                    <span className="min-w-0 break-all">
+                      <TypeLink type={r.coinType} />
                     </span>
-                    <span className="flex shrink-0 flex-col items-end gap-0.5">
-                      <span className="flex items-center gap-2">
-                        <span
-                          className="border-line text-muted shrink-0 border px-1.5 py-px text-[0.625rem] tracking-wider uppercase"
-                          title="where this balance is held"
-                        >
-                          {source}
-                        </span>
-                        <span className="text-text">{full(r.total)}</span>
+                  </span>
+                  <span className="flex shrink-0 flex-col items-end gap-0.5">
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="border-line text-muted shrink-0 border px-1.5 py-px text-[0.625rem] tracking-wider uppercase"
+                        title="where this balance is held"
+                      >
+                        {source}
                       </span>
-                      {mixed && (
-                        <span className="text-muted text-[0.6875rem] tracking-wide">
-                          coins {bare(r.inCoins)} · accumulator {bare(r.inAccumulator)}
-                        </span>
-                      )}
+                      <span className="text-text">{full(r.total)}</span>
                     </span>
-                  </li>
-                )
-              })}
-            </ul>
-          ) : (
-            <Muted>no coin balances.</Muted>
-          ))}
+                    {mixed && (
+                      <span className="text-muted text-[0.6875rem] tracking-wide">
+                        coins {bare(r.inCoins)} · accumulator {bare(r.inAccumulator)}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              )
+            }}
+          </DataList>
+        )}
       </PanelSection>
     </Panel>
   )

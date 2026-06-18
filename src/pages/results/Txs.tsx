@@ -1,14 +1,11 @@
 import { useState } from 'react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
-import { Pager, useCursorPager } from '@/components/ui/Pager'
-import { RowIndex } from '@/components/ui/RowIndex'
-import { SkeletonLines } from '@/components/ui/Skeleton'
-import { LinkedHash } from '@/components/ui/links'
+import { Pager, usePagedList } from '@/components/ui/Pager'
+import { DataList } from '@/components/ui/DataList'
 import { useNetwork } from '@/context/useNetwork'
-import { usePolledAsync } from '@/lib/useAsync'
 import { fetchTransactions, type TxFilter } from '@/lib/transaction'
-import { formatTimestamp } from '@/lib/format'
 import { cn } from '@/lib/cn'
+import { TransactionRow } from './TransactionRow'
 
 /** What the id relates to: txs it signed, touched it, or called into it. */
 export type TxRelation = 'sent' | 'object' | 'function'
@@ -34,25 +31,19 @@ export function Txs({
   label?: string
 }) {
   const { network } = useNetwork()
-  const pager = useCursorPager(`${network}|${id}|${relation}`)
 
   // "Live" mode polls for new transactions. New txs land at the top (the feed is
-  // newest-first), so live pins to the first page and hides the pager.
+  // newest-first), so `usePagedList` pins to the first page and reports
+  // `paged: false` while polling — which hides the pager below.
   const [live, setLive] = useState(false)
   const [intervalSec, setIntervalSec] = useState(1)
-  const after = live ? null : pager.after
   const pollMs = live ? Math.max(1, intervalSec) * 1000 : null
 
-  const { data, loading, error } = usePolledAsync(
-    (signal) =>
-      fetchTransactions(
-        network,
-        filterFor(relation, id),
-        { first: pager.pageSize, after },
-        signal,
-      ),
-    [network, id, relation, pager.pageSize, after],
-    pollMs,
+  const { items, loading, error, paged, pagerProps } = usePagedList(
+    `${network}|${id}|${relation}`,
+    (args, signal) =>
+      fetchTransactions(network, filterFor(relation, id), args, signal),
+    { pollMs },
   )
 
   const showSender = relation !== 'sent'
@@ -69,52 +60,22 @@ export function Txs({
               intervalSec={intervalSec}
               onIntervalChange={setIntervalSec}
             />
-            {!live && (
-              <Pager
-                pageIndex={pager.pageIndex}
-                pageSize={pager.pageSize}
-                onPageSize={pager.setPageSize}
-                hasNext={!!data?.hasNextPage}
-                onPrev={pager.prev}
-                onNext={() => pager.next(data?.endCursor ?? null)}
-                label="transactions"
-              />
-            )}
+            {paged && <Pager {...pagerProps} label="transactions" />}
           </div>
         }
       >
-        {loading ? (
-          <SkeletonLines count={5} />
-        ) : error ? (
-          <span className="text-danger font-mono text-xs">{error.message}</span>
-        ) : data && data.transactions.length > 0 ? (
-          <ul className="divide-line divide-y font-mono text-xs">
-            {data.transactions.map((tx, i) => (
-              <li key={tx.digest} className="flex items-center gap-x-3 py-2.5">
-                <RowIndex n={i + 1} />
-                <LinkedHash value={tx.digest} />
-                <span className="text-muted shrink-0">
-                  {formatTimestamp(tx.timestamp)}
-                </span>
-                {showSender && tx.sender && (
-                  <span className="text-muted inline-flex shrink-0 items-center gap-1.5">
-                    by <LinkedHash value={tx.sender} />
-                  </span>
-                )}
-                <span
-                  className={cn(
-                    'ml-auto shrink-0',
-                    tx.status === 'FAILURE' ? 'text-danger' : 'text-secondary',
-                  )}
-                >
-                  {tx.status?.toLowerCase() ?? '—'}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <span className="text-muted text-sm">no transactions.</span>
-        )}
+        <DataList loading={loading} error={error} items={items} empty="no transactions.">
+          {(tx, i) => (
+            <TransactionRow
+              key={tx.digest}
+              index={i + 1}
+              digest={tx.digest}
+              timestamp={tx.timestamp}
+              sender={showSender ? tx.sender : null}
+              status={tx.status}
+            />
+          )}
+        </DataList>
       </PanelSection>
     </Panel>
   )

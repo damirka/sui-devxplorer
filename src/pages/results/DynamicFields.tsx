@@ -1,9 +1,9 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { Panel, PanelSection } from '@/components/ui/Panel'
-import { Pager, useCursorPager } from '@/components/ui/Pager'
+import { Pager, usePagedList } from '@/components/ui/Pager'
+import { DataList } from '@/components/ui/DataList'
 import { RowIndex } from '@/components/ui/RowIndex'
-import { SkeletonLines } from '@/components/ui/Skeleton'
 import { HoverCard } from '@/components/ui/HoverCard'
 import { useSearchHref } from '@/components/ui/links'
 import { truncateMiddle } from '@/lib/search'
@@ -57,31 +57,24 @@ export function DynamicFields({
 }) {
   const { network } = useNetwork()
   const searchHref = useSearchHref()
-  const pager = useCursorPager(`${network}|${id}`)
-  const { data, loading, error } = useAsync(
-    (signal) =>
-      fetchDynamicFields(network, id, { first: pager.pageSize, after: pager.after }, signal),
-    [network, id, pager.pageSize, pager.after],
+  const { items, loading, error, paged, pagerProps } = usePagedList(
+    `${network}|${id}`,
+    (args, signal) => fetchDynamicFields(network, id, args, signal),
   )
 
   // Derived objects live at a separate id; fetch their concrete types in one
   // batched request so each row can show what kind of object it points at.
   const derivedIds = useMemo(
     () =>
-      (data?.fields ?? [])
-        .map((df) => rowFor(df).derived)
-        .filter((v): v is string => v != null),
-    [data],
+      items.map((df) => rowFor(df).derived).filter((v): v is string => v != null),
+    [items],
   )
   const { data: types } = useAsync(
     (signal) => fetchObjectTypes(network, derivedIds, signal),
     [network, derivedIds],
   )
 
-  // Hide pagination entirely when there's a single page of results.
-  const paged = pager.pageIndex > 0 || !!data?.hasNextPage
-
-  if (hideWhenEmpty && !loading && !error && data && data.fields.length === 0) {
+  if (hideWhenEmpty && !loading && !error && items.length === 0) {
     return null
   }
 
@@ -89,102 +82,82 @@ export function DynamicFields({
     <Panel>
       <PanelSection
         label="Dynamic fields"
-        action={
-          paged ? (
-            <Pager
-              pageIndex={pager.pageIndex}
-              pageSize={pager.pageSize}
-              onPageSize={pager.setPageSize}
-              hasNext={!!data?.hasNextPage}
-              onPrev={pager.prev}
-              onNext={() => pager.next(data?.endCursor ?? null)}
-              label="dynamic fields"
-            />
-          ) : undefined
-        }
+        action={paged ? <Pager {...pagerProps} label="dynamic fields" /> : undefined}
       >
-        {loading ? (
-          <SkeletonLines count={5} />
-        ) : error ? (
-          <span className="text-danger font-mono text-xs">{error.message}</span>
-        ) : data && data.fields.length > 0 ? (
-          <ul className="divide-line divide-y font-mono text-xs">
-            {data.fields.map((df, i) => {
-              const { target, derived } = rowFor(df)
-              const derivedType = derived ? types?.get(derived) : null
-              const vType = valueType(df)
-              // The key json (`{labels:[…]}`, `2`, …) identifies the entry — but
-              // a `dummy_field` marker key carries nothing, so drop it there.
-              const keyLabel = isDummyField(df.name.json)
-                ? null
-                : formatName(df.name.json)
-              return (
-                <li key={i}>
-                  <Link
-                    to={searchHref(target)}
-                    title={`open ${target}`}
-                    className="hover:bg-surface-2 group -mx-2 flex items-center gap-2 px-2 py-2.5 transition-colors"
-                  >
-                    <RowIndex n={i + 1} />
-                    {derived ? (
-                      <>
-                        <span className="border-line text-muted shrink-0 border px-1.5 py-0.5 text-[0.625rem] tracking-wide uppercase">
-                          derived
+        <DataList
+          loading={loading}
+          error={error}
+          items={items}
+          empty="no dynamic fields."
+        >
+          {(df, i) => {
+            const { target, derived } = rowFor(df)
+            const derivedType = derived ? types?.get(derived) : null
+            const vType = valueType(df)
+            // The key json (`{labels:[…]}`, `2`, …) identifies the entry — but
+            // a `dummy_field` marker key carries nothing, so drop it there.
+            const keyLabel = isDummyField(df.name.json)
+              ? null
+              : formatName(df.name.json)
+            return (
+              <li key={i}>
+                <Link
+                  to={searchHref(target)}
+                  title={`open ${target}`}
+                  className="hover:bg-surface-2 group -mx-2 flex items-center gap-2 px-2 py-2.5 transition-colors"
+                >
+                  <RowIndex n={i + 1} />
+                  {derived ? (
+                    <>
+                      <span className="border-line text-muted shrink-0 border px-1.5 py-0.5 text-[0.625rem] tracking-wide uppercase">
+                        derived
+                      </span>
+                      <span className="text-primary group-hover:underline">
+                        {derivedType ? formatType(derivedType) : truncateMiddle(derived)}
+                      </span>
+                      {derivedType && (
+                        <span className="hash text-muted ml-auto shrink-0">
+                          {truncateMiddle(derived)}
                         </span>
-                        <span className="text-primary group-hover:underline">
-                          {derivedType ? formatType(derivedType) : truncateMiddle(derived)}
-                        </span>
-                        {derivedType && (
-                          <span className="hash text-muted ml-auto shrink-0">
-                            {truncateMiddle(derived)}
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {/* key type → value type (a Field<K,V> entry); the full,
+                          un-trimmed types appear in the hover card */}
+                      <HoverCard
+                        className="min-w-0"
+                        card={
+                          <TypeHint keyType={df.name.type.repr} valueType={vType} />
+                        }
+                      >
+                        <span className="block truncate group-hover:underline">
+                          <span className="text-primary">
+                            {formatType(df.name.type.repr)}
                           </span>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        {/* key type → value type (a Field<K,V> entry); the full,
-                            un-trimmed types appear in the hover card */}
-                        <HoverCard
-                          className="min-w-0"
-                          card={
-                            <TypeHint
-                              keyType={df.name.type.repr}
-                              valueType={vType}
-                            />
-                          }
+                          {vType && (
+                            <>
+                              <span className="text-muted"> → </span>
+                              <span className="text-primary">{formatType(vType)}</span>
+                            </>
+                          )}
+                        </span>
+                      </HoverCard>
+                      {keyLabel && (
+                        <span
+                          className="hash text-muted ml-auto max-w-[45%] shrink-0 truncate"
+                          title={keyLabel}
                         >
-                          <span className="block truncate group-hover:underline">
-                            <span className="text-primary">
-                              {formatType(df.name.type.repr)}
-                            </span>
-                            {vType && (
-                              <>
-                                <span className="text-muted"> → </span>
-                                <span className="text-primary">
-                                  {formatType(vType)}
-                                </span>
-                              </>
-                            )}
-                          </span>
-                        </HoverCard>
-                        {keyLabel && (
-                          <span
-                            className="hash text-muted ml-auto max-w-[45%] shrink-0 truncate"
-                            title={keyLabel}
-                          >
-                            {keyLabel}
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </Link>
-                </li>
-              )
-            })}
-          </ul>
-        ) : (
-          <span className="text-muted text-sm">no dynamic fields.</span>
-        )}
+                          {keyLabel}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </Link>
+              </li>
+            )
+          }}
+        </DataList>
       </PanelSection>
     </Panel>
   )
