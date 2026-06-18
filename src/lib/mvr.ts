@@ -125,6 +125,27 @@ export async function mvrNameForPackage(
   return reverseResolveMvr(network, packageId, signal)
 }
 
+/**
+ * Reverse-resolve a package id to its MVR name, memoized per `(network, id)` for
+ * the session. The shared promise means many callers (e.g. every `TypeLink`
+ * rendering the same package) trigger a single request; failures cache as `null`.
+ * Returns `null` immediately on networks without a registry (devnet).
+ */
+const reverseNameCache = new Map<string, Promise<string | null>>()
+export function mvrNameForPackageCached(
+  network: Network,
+  packageId: string,
+): Promise<string | null> {
+  if (!mvrSupported(network)) return Promise.resolve(null)
+  const key = `${network}|${packageId}`
+  let p = reverseNameCache.get(key)
+  if (!p) {
+    p = reverseResolveMvr(network, packageId).catch(() => null)
+    reverseNameCache.set(key, p)
+  }
+  return p
+}
+
 /* ── forward: resolve a name to a package ────────────────────────────── */
 
 /**
@@ -140,6 +161,28 @@ export async function resolveMvrName(
     resolution: Record<string, { package_id: string } | null>
   }>(network, '/v1/resolution/bulk', { names: [name] }, signal)
   return data?.resolution?.[name]?.package_id ?? null
+}
+
+/**
+ * Resolve an MVR *type* name — `@ns/app[/v]::module::Struct` — to its fully
+ * qualified on-chain type, by resolving the package part through MVR (the rest
+ * is passed through). Returns `null` on devnet (no registry) or when the name
+ * doesn't resolve.
+ *
+ * Pin the name to the version that DEFINES the struct: a type's canonical id is
+ * its *defining* package, not the latest upgrade. E.g. the unversioned
+ * `@suins/core` points at a facade package where `SuinsRegistration` isn't
+ * defined (a type filter there matches nothing) — use `@suins/core/1`.
+ */
+export async function resolveMvrType(
+  network: Network,
+  typeName: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const sep = typeName.indexOf('::')
+  if (sep === -1) return null
+  const pkg = await resolveMvrName(network, typeName.slice(0, sep), signal)
+  return pkg ? pkg + typeName.slice(sep) : null
 }
 
 /* ── metadata ────────────────────────────────────────────────────────── */

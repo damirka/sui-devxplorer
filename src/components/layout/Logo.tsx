@@ -11,7 +11,9 @@ export function Logo({ className }: { className?: string }) {
       )}
     >
       <span className="text-primary select-none">❯</span>
-      <span className="inline-flex items-center">
+      {/* Wordmark collapses to just the `❯` glyph on narrow screens so the
+          header's inline search has room. */}
+      <span className="hidden items-center sm:inline-flex">
         <span className="text-text transition-colors group-hover:text-primary">
           dev
         </span>

@@ -1,8 +1,32 @@
-import { Fragment, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { CopyButton } from './CopyButton'
 import { formatType } from '@/lib/format'
 import { truncateMiddle } from '@/lib/search'
+import { mvrNameForPackageCached } from '@/lib/mvr'
+import { useNetwork } from '@/context/useNetwork'
+
+/**
+ * The MVR name assigned to a package id (reverse-resolved, session-cached), or
+ * `null`. Lets a type repr show `@ns/app::mod::Struct` in place of the raw
+ * package id. `null` package → no lookup.
+ */
+function useMvrName(packageId: string | null): string | null {
+  const { network } = useNetwork()
+  const [name, setName] = useState<string | null>(null)
+  useEffect(() => {
+    setName(null)
+    if (!packageId) return
+    let active = true
+    mvrNameForPackageCached(network, packageId).then((n) => {
+      if (active) setName(n)
+    })
+    return () => {
+      active = false
+    }
+  }, [network, packageId])
+  return name
+}
 
 /** Build a `?search=` href for the current location, preserving other params.
  * Drops `version` — a pinned object version belongs to the id being left, not
@@ -121,7 +145,13 @@ function splitTypeArgs(s: string): string[] {
  */
 function TypeNodeView({ node }: { node: TypeNode }) {
   const searchHref = useSearchHref()
-  const isStruct = node.base.includes('::')
+  const sep = node.base.indexOf('::')
+  const isStruct = sep !== -1
+  // Reverse-resolve the base struct's package to its MVR name, and show
+  // `@ns/app::mod::Struct` in place of the raw id when one exists.
+  const mvrName = useMvrName(isStruct ? node.base.slice(0, sep) : null)
+  const baseLabel =
+    isStruct && mvrName ? mvrName + node.base.slice(sep) : formatType(node.base)
   return (
     <>
       {isStruct ? (
@@ -130,7 +160,7 @@ function TypeNodeView({ node }: { node: TypeNode }) {
           title={node.base}
           className="text-primary hover:underline"
         >
-          {formatType(node.base)}
+          {baseLabel}
         </Link>
       ) : (
         formatType(node.base)

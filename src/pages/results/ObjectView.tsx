@@ -23,6 +23,7 @@ import { PackageBody } from './PackageBody'
 import { OwnedObjects } from './OwnedObjects'
 import { DynamicFields } from './DynamicFields'
 import { Txs } from './Txs'
+import { ObjectTransactions } from './ObjectTransactions'
 import { Badge } from '@/components/ui/Badge'
 import { SuinsNames } from './SuinsNames'
 import { SignerPanel } from './SignerPanel'
@@ -449,7 +450,7 @@ function MoveObjectBody({
         <>
           <Balances id={data.address} hideWhenEmpty />
           <OwnedObjects id={data.address} />
-          <Txs id={data.address} relation="object" label="Transactions" />
+          <ObjectTransactions id={data.address} currentVersion={data.version} />
         </>
       )}
     </div>

@@ -661,7 +661,8 @@ function CallExpr({
     case 'MoveCallCommand':
       return (
         <>
-          <FnTarget fn={cmd.function} />({seq(cmd.arguments)})
+          <FnTarget fn={cmd.function} />
+          <TypeArgs args={cmd.typeArguments} />({seq(cmd.arguments)})
         </>
       )
     case 'SplitCoinsCommand':
@@ -735,6 +736,24 @@ function ArgSeq({
 /** A builtin (non-Move-call) command name. */
 function Builtin({ name }: { name: string }) {
   return <span className="text-primary">{name}</span>
+}
+
+/** The concrete `<T0, T1>` type arguments of a MoveCall — each a clickable type
+ * (addresses trimmed). Nothing for a non-generic call. */
+function TypeArgs({ args }: { args: string[] }) {
+  if (!args.length) return null
+  return (
+    <span className="text-muted">
+      &lt;
+      {args.map((t, i) => (
+        <Fragment key={i}>
+          {i > 0 && ', '}
+          <TypeLink type={t} />
+        </Fragment>
+      ))}
+      &gt;
+    </span>
+  )
 }
 
 /** A MoveCall target: clickable package + module, function name reveals the signature. */

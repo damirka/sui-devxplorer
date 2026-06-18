@@ -80,11 +80,28 @@ export function Balances({
       fetchBalances(network, id, { first: pager.pageSize, after: pager.after }, signal),
     [network, id, pager.pageSize, pager.after],
   )
-  // Skip zero balances everywhere — only coins actually held are shown.
+  // Pin the standard coins, in STANDARD_TYPES order. Source them from the
+  // dedicated by-type fetch (which reaches coins sitting deep in the paginated
+  // list) AND, as a fallback, from the current page — so a slow or failed
+  // standard fetch (e.g. under heavy page load) can't make SUI silently vanish
+  // or drop out of the top. Zero balances are skipped everywhere.
+  const pinnedByType = new Map<string, CoinBalance>()
+  for (const r of standard) {
+    if (r.total !== '0') pinnedByType.set(r.coinType, r)
+  }
+  for (const r of pageData?.balances ?? []) {
+    if (STANDARD_SET.has(r.coinType) && r.total !== '0' && !pinnedByType.has(r.coinType)) {
+      pinnedByType.set(r.coinType, r)
+    }
+  }
+  const pinned = STANDARD_TYPES.map((t) => pinnedByType.get(t)).filter(
+    (r): r is CoinBalance => !!r,
+  )
+
+  // Everything else (non-standard, non-zero), in the service's order.
   const rest = (pageData?.balances ?? []).filter(
     (r) => !STANDARD_SET.has(r.coinType) && r.total !== '0',
   )
-  const pinned = standard.filter((r) => r.total !== '0')
   // Pin only on the first page; deeper pages are just the paginated remainder.
   const rows: CoinBalance[] = pager.pageIndex === 0 ? [...pinned, ...rest] : rest
 

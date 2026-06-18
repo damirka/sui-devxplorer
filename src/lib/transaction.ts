@@ -14,6 +14,10 @@ const TRANSACTION_QUERY = `
 query Transaction($digest: String!) {
   transaction(digest: $digest) {
     digest
+    # Fully-resolved JSON form of the tx. The structured \`commands\` path below
+    # has no \`typeArguments\` on a MoveCall, but this does — we read the concrete
+    # call type args from here and attach them by command index (see fetch).
+    transactionJson
     sender { address }
     gasInput {
       gasSponsor { address }
@@ -202,7 +206,18 @@ export interface MoveFn {
 }
 
 export type TxCommand =
-  | { __typename: 'MoveCallCommand'; function: MoveFn | null; arguments: TxArgument[] }
+  | {
+      __typename: 'MoveCallCommand'
+      function: MoveFn | null
+      arguments: TxArgument[]
+      /**
+       * Concrete type arguments of this call (e.g. `0x2::sui::SUI`), in
+       * declaration order — one per the function's type parameters. Absent from
+       * the structured schema; attached from `transactionJson` at fetch time
+       * (`[]` for a non-generic call).
+       */
+      typeArguments: string[]
+    }
   | { __typename: 'SplitCoinsCommand'; coin: TxArgument; amounts: TxArgument[] }
   | { __typename: 'TransferObjectsCommand'; inputs: TxArgument[]; address: TxArgument }
   | { __typename: 'MergeCoinsCommand'; coin: TxArgument; coins: TxArgument[] }
@@ -297,12 +312,9 @@ export async function fetchTransaction(
   digest: string,
   signal?: AbortSignal,
 ): Promise<SuiTransaction | null> {
-  const { data } = await gqlRequest<{ transaction: SuiTransaction | null }>(
-    network,
-    TRANSACTION_QUERY,
-    { digest },
-    signal,
-  )
+  const { data } = await gqlRequest<{
+    transaction: (SuiTransaction & { transactionJson?: unknown }) | null
+  }>(network, TRANSACTION_QUERY, { digest }, signal)
 
   // Owned/Receiving inputs carry their Move type already; shared inputs don't
   // expose the object, so resolve those types in one batched follow-up query.
@@ -321,8 +333,39 @@ export async function fetchTransaction(
       )
       for (const s of shared) s.type = types.get(s.address) ?? null
     }
+
+    // MoveCall type arguments aren't in the structured schema — graft them on
+    // from `transactionJson` by command index (the two command lists are
+    // parallel; `commands` may be truncated at 50, but it's a prefix so indices
+    // still line up).
+    const byCmd = commandTypeArguments(tx?.transactionJson)
+    kind.commands.nodes.forEach((cmd, i) => {
+      if (cmd.__typename === 'MoveCallCommand') cmd.typeArguments = byCmd[i] ?? []
+    })
   }
   return tx
+}
+
+/**
+ * Per-command MoveCall type arguments parsed out of `transactionJson`
+ * (`kind.programmableTransaction.commands[i].moveCall.typeArguments`). Returns a
+ * positional array aligned with the command list — `[]` for non-MoveCall
+ * positions and when the field/JSON is absent. Treated as plain data: the
+ * strings are rendered as type reprs only, never interpreted.
+ */
+function commandTypeArguments(transactionJson: unknown): string[][] {
+  const commands = (
+    transactionJson as
+      | { kind?: { programmableTransaction?: { commands?: unknown } } }
+      | null
+      | undefined
+  )?.kind?.programmableTransaction?.commands
+  if (!Array.isArray(commands)) return []
+  return commands.map((c) => {
+    const ta = (c as { moveCall?: { typeArguments?: unknown } } | null)?.moveCall
+      ?.typeArguments
+    return Array.isArray(ta) ? ta.filter((t): t is string => typeof t === 'string') : []
+  })
 }
 
 /** Resolve `address → Move type repr` for a set of object ids in one query. */

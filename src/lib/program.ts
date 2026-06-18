@@ -21,13 +21,18 @@ import {
  * "script" view.
  */
 export function programToText(commands: TxCommand[], inputs: TxInput[]): string {
+  const inferredPure = inferPureTypes(commands, inputs)
+  const typeArgsByCmd = resolveTypeArguments(commands, inputs, inferredPure)
   const used = usedResults(commands)
   return commands
-    .map((cmd, i) => `${used.has(i) ? `let res${i} = ` : ''}${callText(cmd, inputs)};`)
+    .map(
+      (cmd, i) =>
+        `${used.has(i) ? `let res${i} = ` : ''}${callText(cmd, inputs, typeArgsByCmd.get(i))};`,
+    )
     .join('\n')
 }
 
-function callText(cmd: TxCommand, inputs: TxInput[]): string {
+function callText(cmd: TxCommand, inputs: TxInput[], typeArgs?: string[]): string {
   const list = (args: TxArgument[]) => args.map((a) => argText(a, inputs)).join(', ')
   switch (cmd.__typename) {
     case 'MoveCallCommand': {
@@ -35,7 +40,8 @@ function callText(cmd: TxCommand, inputs: TxInput[]): string {
       const target = fn
         ? `${fn.module.package.address}::${fn.module.name}::${fn.name}`
         : 'unknown_function'
-      return `${target}(${list(cmd.arguments)})`
+      const ta = typeArgs && typeArgs.length ? `<${typeArgs.join(', ')}>` : ''
+      return `${target}${ta}(${list(cmd.arguments)})`
     }
     case 'SplitCoinsCommand':
       return `split_coins(${argText(cmd.coin, inputs)}, [${list(cmd.amounts)}])`
@@ -345,11 +351,12 @@ function isStringType(t: string): boolean {
 }
 
 /**
- * Fill each MoveCall's `typeArguments`. The schema doesn't expose them, but the
- * function's parameter reprs carry positional type vars (`$0`, `$1`) which we
- * unify against the concrete types of the arguments actually passed (object
- * input types, pure types, the gas coin, or a prior result's substituted return
- * type). Returns `cmdIndex → [concrete type per type param]`.
+ * Resolve each MoveCall's `typeArguments` to `cmdIndex → [concrete type per type
+ * param]`. The authoritative values come from `transactionJson` and are attached
+ * to the command (`cmd.typeArguments`) at fetch time — those win. The inference
+ * below (unifying the function's positional type vars `$0`/`$1` against the
+ * concrete types of the arguments passed) is kept only as a fallback for when
+ * the authoritative list is missing.
  */
 function resolveTypeArguments(
   commands: TxCommand[],
@@ -358,7 +365,15 @@ function resolveTypeArguments(
 ): Map<number, string[]> {
   const resolved = new Map<number, string[]>()
   commands.forEach((cmd, i) => {
-    if (cmd.__typename !== 'MoveCallCommand' || !cmd.function) return
+    if (cmd.__typename !== 'MoveCallCommand') return
+    // Authoritative type args from transactionJson — exact, and available even
+    // when the function definition didn't resolve. Use them directly.
+    if (cmd.typeArguments.length) {
+      resolved.set(i, cmd.typeArguments)
+      return
+    }
+    // Fallback: infer from the signature (needs the resolved function).
+    if (!cmd.function) return
     const arity = cmd.function.typeParameters.length
     if (arity === 0) return
     const out: (string | undefined)[] = new Array(arity).fill(undefined)

@@ -143,7 +143,11 @@ query ObjectVersions($address: SuiAddress!, $last: Int!, $before: String) {
     nodes {
       version
       digest
-      previousTransaction { digest effects { timestamp } }
+      previousTransaction {
+        digest
+        sender { address }
+        effects { status timestamp }
+      }
     }
   }
 }
@@ -154,6 +158,9 @@ export interface ObjectVersionNode {
   digest: string | null
   /** The transaction that produced this version. */
   txDigest: string | null
+  /** Its sender and execution status — for showing the history as a tx list. */
+  sender: string | null
+  status: string | null
   timestamp: string | null
 }
 
@@ -185,7 +192,8 @@ export async function fetchObjectVersions(
         digest: string | null
         previousTransaction: {
           digest: string
-          effects: { timestamp: string | null } | null
+          sender: { address: string } | null
+          effects: { status: string | null; timestamp: string | null } | null
         } | null
       }[]
     }
@@ -201,6 +209,8 @@ export async function fetchObjectVersions(
       version: n.version,
       digest: n.digest,
       txDigest: n.previousTransaction?.digest ?? null,
+      sender: n.previousTransaction?.sender?.address ?? null,
+      status: n.previousTransaction?.effects?.status ?? null,
       timestamp: n.previousTransaction?.effects?.timestamp ?? null,
     }))
     .reverse()
@@ -805,6 +815,81 @@ export async function fetchOwnedUpgradeCaps(
       type: n.contents?.type.repr ?? null,
       json: n.contents?.json ?? null,
     })),
+    hasNextPage: conn.pageInfo.hasNextPage,
+    endCursor: conn.pageInfo.endCursor,
+  }
+}
+
+// The `0x2::package::Publisher` objects an owner holds. Each Publisher proves
+// authority over the package+module it was claimed from; those live in its
+// `contents.json` (`{ package, module_name }`), so we pull the json (no Display).
+const OWNED_PUBLISHERS_QUERY = `
+query OwnedPublishers($address: SuiAddress!, $first: Int, $after: String) {
+  address(address: $address) {
+    objects(first: $first, after: $after, filter: { type: "0x2::package::Publisher" }) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        address
+        contents { json }
+      }
+    }
+  }
+}
+`
+
+export interface OwnedPublisher {
+  /** The Publisher object's own id. */
+  address: string
+  /** The package it was claimed from, `0x`-prefixed (json stores it bare), or null. */
+  package: string | null
+  /** The module within that package the claiming witness came from. */
+  moduleName: string | null
+}
+
+export interface OwnedPublishersPage {
+  publishers: OwnedPublisher[]
+  hasNextPage: boolean
+  endCursor: string | null
+}
+
+/**
+ * One page of the `0x2::package::Publisher` objects owned by an address (or
+ * object — ownership is by address). `first` is capped at 50. Empty when none.
+ */
+export async function fetchOwnedPublishers(
+  network: Network,
+  ownerId: string,
+  opts: { first: number; after?: string | null },
+  signal?: AbortSignal,
+): Promise<OwnedPublishersPage> {
+  const { data } = await gqlRequest<{
+    address: {
+      objects: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null }
+        nodes: { address: string; contents: { json: unknown } | null }[]
+      }
+    } | null
+  }>(
+    network,
+    OWNED_PUBLISHERS_QUERY,
+    { address: ownerId, first: opts.first, after: opts.after ?? null },
+    signal,
+  )
+  const conn = data.address?.objects
+  if (!conn) return { publishers: [], hasNextPage: false, endCursor: null }
+  return {
+    publishers: conn.nodes.map((n) => {
+      const json = (n.contents?.json ?? {}) as {
+        package?: unknown
+        module_name?: unknown
+      }
+      const pkg = typeof json.package === 'string' ? json.package : null
+      return {
+        address: n.address,
+        package: pkg ? '0x' + pkg.replace(/^0x/, '') : null,
+        moduleName: typeof json.module_name === 'string' ? json.module_name : null,
+      }
+    }),
     hasNextPage: conn.pageInfo.hasNextPage,
     endCursor: conn.pageInfo.endCursor,
   }
