@@ -14,6 +14,7 @@ import { OwnedObjects } from './OwnedObjects'
 import { Txs } from './Txs'
 import { MvrPanel } from './MvrPanel'
 import { PackageUpgradeCap } from './PackageUpgradeCap'
+import { Balances } from './Balances'
 import { PackageDependencies } from './PackageDependencies'
 import { PackageDependents } from './PackageDependents'
 import { FunctionDefinitionPanel } from './FunctionDefinition'
@@ -71,6 +72,7 @@ export function PackageBody({
         />
       )}
 
+      <Balances id={data.address} hideWhenEmpty />
       <OwnedObjects id={data.address} />
       <Txs
         id={data.address}

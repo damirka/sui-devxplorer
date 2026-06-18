@@ -16,7 +16,9 @@ export function Panel({ className, children, ...props }: PanelProps) {
 interface PanelSectionProps {
   /** Optional menu index, e.g. `1` → `01`. Numbers are zero-padded to 2. */
   index?: number | string
-  label?: string
+  /** Usually the section title text; a node when the header needs to be
+   * interactive (e.g. a collapse toggle). */
+  label?: ReactNode
   action?: ReactNode
   children: ReactNode
   className?: string

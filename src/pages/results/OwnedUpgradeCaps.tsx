@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Pager, useCursorPager } from '@/components/ui/Pager'
 import { RowIndex } from '@/components/ui/RowIndex'
@@ -117,6 +119,8 @@ export function OwnedUpgradeCaps({
   const rows = toCapRows(data?.caps ?? [])
   const mvrNames = useUpgradeCapPackageNames(network, rows)
 
+  const [open, setOpen] = useState(true)
+
   // Hide pagination entirely when there's a single page of results.
   const paged = pager.pageIndex > 0 || !!data?.hasNextPage
 
@@ -127,9 +131,22 @@ export function OwnedUpgradeCaps({
   return (
     <Panel>
       <PanelSection
-        label="UpgradeCaps held"
+        label={
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            title={open ? 'collapse' : 'expand'}
+            className="hover:text-primary inline-flex items-center gap-1.5 transition-colors"
+          >
+            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <span className="panel-label">UpgradeCaps held</span>
+          </button>
+        }
         action={
-          paged ? (
+          // Pager only when expanded; the count stays visible either way so a
+          // collapsed panel still tells you how many caps are held.
+          open && paged ? (
             <Pager
               pageIndex={pager.pageIndex}
               pageSize={pager.pageSize}
@@ -144,24 +161,25 @@ export function OwnedUpgradeCaps({
           ) : undefined
         }
       >
-        {loading ? (
-          <SkeletonLines count={3} />
-        ) : error ? (
-          <span className="text-danger font-mono text-xs">{error.message}</span>
-        ) : rows.length > 0 ? (
-          <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
-            {rows.map((r, i) => (
-              <UpgradeCapRow
-                key={r.id}
-                row={r}
-                mvrName={r.package ? mvrNames[r.package] : undefined}
-                n={pager.pageIndex * pager.pageSize + i + 1}
-              />
-            ))}
-          </ul>
-        ) : (
-          <Muted>no UpgradeCaps held.</Muted>
-        )}
+        {open &&
+          (loading ? (
+            <SkeletonLines count={3} />
+          ) : error ? (
+            <span className="text-danger font-mono text-xs">{error.message}</span>
+          ) : rows.length > 0 ? (
+            <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
+              {rows.map((r, i) => (
+                <UpgradeCapRow
+                  key={r.id}
+                  row={r}
+                  mvrName={r.package ? mvrNames[r.package] : undefined}
+                  n={pager.pageIndex * pager.pageSize + i + 1}
+                />
+              ))}
+            </ul>
+          ) : (
+            <Muted>no UpgradeCaps held.</Muted>
+          ))}
       </PanelSection>
     </Panel>
   )

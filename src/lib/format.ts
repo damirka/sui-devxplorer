@@ -47,24 +47,44 @@ export function formatSignatureType(repr: string): string {
 }
 
 /**
+ * Render a raw integer token amount (in the coin's smallest unit) as a decimal
+ * string scaled by `decimals`, optionally suffixed with `symbol`. Negative
+ * values keep their sign; trailing fractional zeros are trimmed.
+ *
+ *   formatTokenAmount('65743707093', 6, 'SHARE') → '65,743.707093 SHARE'
+ */
+export function formatTokenAmount(
+  raw: string | number | bigint | null | undefined,
+  decimals: number,
+  symbol?: string,
+): string {
+  if (raw == null) return '—'
+  let n: bigint
+  try {
+    n = BigInt(raw)
+  } catch {
+    return String(raw)
+  }
+  const neg = n < 0n
+  const abs = neg ? -n : n
+  const base = 10n ** BigInt(decimals)
+  const whole = abs / base
+  const frac =
+    decimals > 0
+      ? (abs % base).toString().padStart(decimals, '0').replace(/0+$/, '')
+      : ''
+  const sign = neg ? '-' : ''
+  const num = `${sign}${whole.toLocaleString('en-US')}${frac ? '.' + frac : ''}`
+  return symbol ? `${num} ${symbol}` : num
+}
+
+/**
  * Render a MIST amount (the on-chain integer unit, 1 SUI = 1e9 MIST) as SUI.
  * Accepts string or number (gas/balance values arrive as `BigInt` strings).
  * Negative values keep their sign; trailing zeros are trimmed.
  */
 export function formatSui(mist: string | number | bigint | null | undefined): string {
-  if (mist == null) return '—'
-  let n: bigint
-  try {
-    n = BigInt(mist)
-  } catch {
-    return String(mist)
-  }
-  const neg = n < 0n
-  const abs = neg ? -n : n
-  const whole = abs / 1_000_000_000n
-  const frac = (abs % 1_000_000_000n).toString().padStart(9, '0').replace(/0+$/, '')
-  const sign = neg ? '-' : ''
-  return `${sign}${whole.toLocaleString('en-US')}${frac ? '.' + frac : ''} SUI`
+  return formatTokenAmount(mist, 9, 'SUI')
 }
 
 /** Compact count: `942`, `1.2k`, `3.4M`, `1.1B`. For call counts / totals. */

@@ -99,6 +99,9 @@ query Transaction($digest: String!) {
           address
           idCreated
           idDeleted
+          inputState {
+            asMoveObject { contents { type { repr } } }
+          }
           outputState {
             asMoveObject { contents { type { repr } } }
             asMovePackage { version }
@@ -228,6 +231,10 @@ export interface ObjectChangeNode {
   address: string
   idCreated: boolean | null
   idDeleted: boolean | null
+  /** State before the tx — the only place a *deleted* object's type survives. */
+  inputState: {
+    asMoveObject: { contents: { type: { repr: string } } | null } | null
+  } | null
   outputState: {
     asMoveObject: { contents: { type: { repr: string } } | null } | null
     asMovePackage: { version: number | null } | null
@@ -499,10 +506,15 @@ export function netGasUsed(summary: GasSummary | null | undefined): bigint | nul
 
 /* ── transaction lists (by sender / affected object / affected address) ── */
 
+// Paginated from the *end* (`last`/`before`) so the newest transactions come
+// first — the connection's natural order is ascending (oldest first) and has no
+// `orderBy` argument, so walking backward from the tail is how you get
+// newest-first. Within a `last` window nodes are still ascending, so the caller
+// reverses them; `hasPreviousPage`/`startCursor` drive the "older" page.
 const TX_LIST_QUERY = `
-query TxList($filter: TransactionFilter, $first: Int, $after: String) {
-  transactions(first: $first, after: $after, filter: $filter) {
-    pageInfo { hasNextPage endCursor }
+query TxList($filter: TransactionFilter, $last: Int, $before: String) {
+  transactions(last: $last, before: $before, filter: $filter) {
+    pageInfo { hasPreviousPage startCursor }
     nodes {
       digest
       kind { __typename }
@@ -537,7 +549,7 @@ export interface TxListPage {
 
 interface TxListResult {
   transactions: {
-    pageInfo: { hasNextPage: boolean; endCursor: string | null }
+    pageInfo: { hasPreviousPage: boolean; startCursor: string | null }
     nodes: {
       digest: string
       kind: { __typename: string } | null
@@ -552,6 +564,11 @@ interface TxListResult {
  * signed, `affectedObject` for txs that touched an object, `affectedAddress` for
  * any tx involving an address. Lightweight per-row summary (digest, kind,
  * sender, status, time); `first` is capped at 50 by the service.
+ *
+ * Results come newest-first. `after` is the cursor to the *older* page, and
+ * `hasNextPage` means "there are older transactions" — the connection only
+ * orders ascending, so we page backward from the end (see `TX_LIST_QUERY`) and
+ * reverse each window.
  */
 export async function fetchTransactions(
   network: Network,
@@ -562,19 +579,227 @@ export async function fetchTransactions(
   const { data } = await gqlRequest<TxListResult>(
     network,
     TX_LIST_QUERY,
-    { filter, first: opts.first, after: opts.after ?? null },
+    { filter, last: opts.first, before: opts.after ?? null },
     signal,
   )
   const conn = data.transactions
   return {
-    transactions: conn.nodes.map((n) => ({
-      digest: n.digest,
-      kind: n.kind?.__typename ?? null,
-      sender: n.sender?.address ?? null,
-      status: n.effects?.status ?? null,
-      timestamp: n.effects?.timestamp ?? null,
-    })),
-    hasNextPage: conn.pageInfo.hasNextPage,
-    endCursor: conn.pageInfo.endCursor,
+    // The window is ascending (oldest→newest); reverse so newest is on top.
+    transactions: conn.nodes
+      .map((n) => ({
+        digest: n.digest,
+        kind: n.kind?.__typename ?? null,
+        sender: n.sender?.address ?? null,
+        status: n.effects?.status ?? null,
+        timestamp: n.effects?.timestamp ?? null,
+      }))
+      .reverse(),
+    hasNextPage: conn.pageInfo.hasPreviousPage,
+    endCursor: conn.pageInfo.startCursor,
   }
+}
+
+/* ───────────────────────────── signer scheme ───────────────────────────── */
+
+// A Sui address carries no on-chain marker for *how* it signs — it's just a
+// hash. The only evidence is a transaction the address authored: the signature
+// reveals the scheme (Ed25519, Secp256k1/r1, multisig, zkLogin, passkey) and
+// whatever that scheme exposes — a public key, a multisig committee, a zkLogin
+// proof epoch, a passkey origin. So we read it from a tx this address *sent*.
+// `sentAddress` guarantees the address is the sender, and Sui orders a tx's
+// signatures sender-first (sponsor, if any, second) — so `signatures[0]` is
+// always this address's own signature.
+//
+// Notably absent: the zkLogin *issuer* (OIDC provider). `publicIdentifier`,
+// `jwkId`, and `inputs.issBase64Details` all come back null/empty from this
+// endpoint, so `maxEpoch` is the only zkLogin datum available.
+const SIGNER_SCHEME_QUERY = `
+query SignerScheme($address: SuiAddress!) {
+  transactions(last: 5, filter: { sentAddress: $address }) {
+    nodes {
+      signatures {
+        scheme {
+          __typename
+          ... on Ed25519Signature { publicKey }
+          ... on Secp256K1Signature { publicKey }
+          ... on Secp256R1Signature { publicKey }
+          ... on ZkLoginSignature { maxEpoch }
+          ... on PasskeySignature {
+            clientDataJson
+            signature {
+              __typename
+              ... on Secp256R1Signature { publicKey }
+              ... on Secp256K1Signature { publicKey }
+            }
+          }
+          ... on MultisigSignature {
+            bitmap
+            committee {
+              threshold
+              members {
+                weight
+                publicKey {
+                  __typename
+                  ... on Ed25519PublicKey { bytes }
+                  ... on Secp256K1PublicKey { bytes }
+                  ... on Secp256R1PublicKey { bytes }
+                  ... on PasskeyPublicKey { bytes }
+                  ... on ZkLoginPublicIdentifier { iss }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+/** GraphQL `SignatureScheme` union member → friendly scheme name. */
+const SCHEME_NAMES: Record<string, string> = {
+  Ed25519Signature: 'Ed25519',
+  Secp256K1Signature: 'Secp256k1',
+  Secp256R1Signature: 'Secp256r1',
+  MultisigSignature: 'multisig',
+  ZkLoginSignature: 'zkLogin',
+  PasskeySignature: 'passkey',
+}
+
+/** GraphQL `MultisigMemberPublicKey` union member → friendly scheme name. */
+const PUBKEY_SCHEME_NAMES: Record<string, string> = {
+  Ed25519PublicKey: 'Ed25519',
+  Secp256K1PublicKey: 'Secp256k1',
+  Secp256R1PublicKey: 'Secp256r1',
+  PasskeyPublicKey: 'passkey',
+  ZkLoginPublicIdentifier: 'zkLogin',
+}
+
+export interface MultisigMember {
+  /** Signing scheme of this member's key (e.g. `Ed25519`). */
+  scheme: string
+  /** Base64 public-key bytes, or the issuer URL for a zkLogin member; null if
+   * the schema returned an unrecognised key shape. */
+  publicKey: string | null
+  /** This member's vote weight toward the threshold. */
+  weight: number
+}
+
+export interface MultisigInfo {
+  /** Combined weight required to authorise a transaction (M of N). */
+  threshold: number
+  members: MultisigMember[]
+}
+
+export interface SignerScheme {
+  /** Friendly name of the scheme the address signs with (e.g. `Ed25519`). */
+  scheme: string
+  /** Base64 public key — present for single-key schemes (Ed25519/Secp256k1/
+   * Secp256r1) and the inner key of a passkey. Null for zkLogin/multisig. */
+  publicKey: string | null
+  /** Multisig committee — present only for a multisig scheme. */
+  multisig: MultisigInfo | null
+  /** zkLogin: last epoch the ephemeral proof is valid for. Null unless zkLogin. */
+  maxEpoch: number | null
+  /** Passkey: the WebAuthn relying-party origin (from `clientDataJson`). */
+  passkeyOrigin: string | null
+}
+
+interface SchemeNode {
+  __typename: string
+  /** Single-key schemes: the Base64 public key. */
+  publicKey?: string
+  /** zkLogin. */
+  maxEpoch?: number
+  /** Passkey: WebAuthn client-data JSON + the inner (r1/k1) signature. */
+  clientDataJson?: string
+  signature?: { __typename: string; publicKey?: string } | null
+  /** Multisig. */
+  committee?: {
+    threshold: number
+    members: {
+      weight: number
+      publicKey: { __typename: string; bytes?: string; iss?: string } | null
+    }[]
+  } | null
+}
+
+interface SignerSchemeResult {
+  transactions: {
+    nodes: { signatures: { scheme: SchemeNode }[] | null }[]
+  } | null
+}
+
+/** Pull the relying-party `origin` out of a passkey's WebAuthn client data. */
+function parsePasskeyOrigin(clientDataJson?: string): string | null {
+  if (!clientDataJson) return null
+  try {
+    const origin = (JSON.parse(clientDataJson) as { origin?: unknown }).origin
+    return typeof origin === 'string' ? origin : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Determine how an address signs by inspecting a transaction it authored, and
+ * surface everything that scheme exposes (public key, multisig committee,
+ * zkLogin proof epoch, passkey origin). Returns `null` when the address has
+ * never sent a transaction — Sui exposes no other signal, so a receive-only
+ * address is indistinguishable from a single-key account.
+ */
+export async function fetchSignerScheme(
+  network: Network,
+  address: string,
+  signal?: AbortSignal,
+): Promise<SignerScheme | null> {
+  const { data } = await gqlRequest<SignerSchemeResult>(
+    network,
+    SIGNER_SCHEME_QUERY,
+    { address },
+    signal,
+  )
+  // Nodes come oldest→newest; walk from the newest and use the first tx that
+  // actually carries a signature (`signatures[0]` is the sender's — see query).
+  const nodes = data.transactions?.nodes ?? []
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const s = nodes[i].signatures?.[0]?.scheme
+    if (!s) continue
+    const scheme = SCHEME_NAMES[s.__typename] ?? s.__typename
+    const base: SignerScheme = {
+      scheme,
+      publicKey: null,
+      multisig: null,
+      maxEpoch: null,
+      passkeyOrigin: null,
+    }
+    switch (s.__typename) {
+      case 'MultisigSignature':
+        return {
+          ...base,
+          multisig: s.committee
+            ? {
+                threshold: s.committee.threshold,
+                members: s.committee.members.map((m) => ({
+                  scheme: PUBKEY_SCHEME_NAMES[m.publicKey?.__typename ?? ''] ?? '?',
+                  publicKey: m.publicKey?.bytes ?? m.publicKey?.iss ?? null,
+                  weight: m.weight,
+                })),
+              }
+            : null,
+        }
+      case 'ZkLoginSignature':
+        return { ...base, maxEpoch: s.maxEpoch ?? null }
+      case 'PasskeySignature':
+        return {
+          ...base,
+          publicKey: s.signature?.publicKey ?? null,
+          passkeyOrigin: parsePasskeyOrigin(s.clientDataJson),
+        }
+      default:
+        // Ed25519 / Secp256k1 / Secp256r1 — single key.
+        return { ...base, publicKey: s.publicKey ?? null }
+    }
+  }
+  return null
 }

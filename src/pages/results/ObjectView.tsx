@@ -21,9 +21,12 @@ import { DynamicFields } from './DynamicFields'
 import { Txs } from './Txs'
 import { Badge } from '@/components/ui/Badge'
 import { SuinsNames } from './SuinsNames'
+import { SignerPanel } from './SignerPanel'
+import { fetchSignerScheme } from '@/lib/transaction'
 import { MvrChip } from './MvrChip'
 import { UpgradeCapPanel, upgradeCapData } from './UpgradeCapPanel'
 import { OwnedUpgradeCaps } from './OwnedUpgradeCaps'
+import { Balances } from './Balances'
 import { fetchDefaultSuinsName, atName } from '@/lib/suins'
 import {
   StructDeclaration,
@@ -67,6 +70,16 @@ export function ObjectView({
   // objects and have transaction history worth seeing.
   const isAddress = !loading && !error && data != null && !obj
 
+  // An address carries no on-chain marker for how it signs — the only signal is
+  // a transaction it authored. Probe for it once we know this id is an address,
+  // so we can badge the scheme (Ed25519 / multisig / zkLogin / passkey / …) and
+  // show its detail. Skipped for objects/packages (resolves null, no request).
+  const signer = useAsync(
+    (signal) =>
+      isAddress ? fetchSignerScheme(network, value, signal) : Promise.resolve(null),
+    [network, value, isAddress],
+  )
+
   return (
     <div>
       <ResultHeader
@@ -79,6 +92,7 @@ export function ObjectView({
               <MvrChip packageId={value} knownName={mvrName} />
             )}
             {domain && <Badge kind="suins">{atName(domain)}</Badge>}
+            {signer.data && <Badge>{signer.data.scheme}</Badge>}
           </span>
         }
       />
@@ -98,6 +112,8 @@ export function ObjectView({
       {isAddress && (
         <div className="space-y-6">
           <SuinsNames domain={domain} />
+          <SignerPanel info={signer.data} />
+          <Balances id={value} />
           {/* Even when nothing resolves at this id as a top-level object, it may
               still be a parent holding dynamic fields (e.g. a table/bag) — those
               are the important content, so surface them when present. */}
@@ -292,6 +308,7 @@ function MoveObjectBody({
         </div>
       )}
 
+      <Balances id={data.address} hideWhenEmpty />
       <OwnedObjects id={data.address} />
       <Txs id={data.address} relation="object" label="Transactions" />
     </div>

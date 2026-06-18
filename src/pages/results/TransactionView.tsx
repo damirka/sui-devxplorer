@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronUp } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { SkeletonLines } from '@/components/ui/Skeleton'
@@ -9,10 +9,17 @@ import { JsonBlock, linkifyAddresses } from '@/components/ui/JsonBlock'
 import { HoverCard } from '@/components/ui/HoverCard'
 import { CopyButton } from '@/components/ui/CopyButton'
 import { Field, FieldGrid, Muted } from '@/components/ui/Field'
+import { CoinIcon } from '@/components/ui/CoinIcon'
 import { DANGER_PRE } from '@/components/ui/codeBlock'
 import { cn } from '@/lib/cn'
 import { truncateMiddle } from '@/lib/search'
-import { formatSui, formatTimestamp, formatType, formatSignatureType } from '@/lib/format'
+import {
+  formatSui,
+  formatTokenAmount,
+  formatTimestamp,
+  formatType,
+  formatSignatureType,
+} from '@/lib/format'
 import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
 import { reverseResolveMvrBulk, mvrAppUrl } from '@/lib/mvr'
@@ -28,8 +35,10 @@ import {
   type TxInput,
   type TxCommand,
   type TxArgument,
+  type ObjectChangeNode,
   type MoveFn,
 } from '@/lib/transaction'
+import { fetchCoinMetadata, type CoinMeta } from '@/lib/coin'
 import {
   buildSdkProgram,
   buildCliProgram,
@@ -927,12 +936,37 @@ function ProgramCode({ code }: { code: string }) {
   )
 }
 
+// Dynamic-field wrappers: `0x2::dynamic_field::Field<…>` and
+// `0x2::dynamic_object_field::Field<…>` (the address matched whether written
+// short or fully padded). These dominate object-change lists for table/bag-heavy
+// txs, so they get their own tab.
+const DF_TYPE_RE = /^0x0*2::dynamic_(?:object_)?field::Field(?:<|$)/
+
+/** A change's Move type — from the output state, or the input state for a
+ * deleted object (whose output state is gone). `null` for packages / unknown. */
+function changeType(n: ObjectChangeNode): string | null {
+  return (
+    n.outputState?.asMoveObject?.contents?.type.repr ??
+    n.inputState?.asMoveObject?.contents?.type.repr ??
+    null
+  )
+}
+
+function isDynamicFieldChange(n: ObjectChangeNode): boolean {
+  const t = changeType(n)
+  return t != null && DF_TYPE_RE.test(t)
+}
+
 function ObjectChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) {
   const { network } = useNetwork()
   const nodes = fx.objectChanges.nodes
-  const created = nodes.filter((n) => n.idCreated && !n.idDeleted)
-  const deleted = nodes.filter((n) => n.idDeleted)
-  const mutated = nodes.filter((n) => !n.idCreated && !n.idDeleted)
+
+  // Split dynamic-field changes onto their own tab; everything else (owned /
+  // shared / immutable objects + packages) stays on the main tab.
+  const dfNodes = nodes.filter(isDynamicFieldChange)
+  const objNodes = nodes.filter((n) => !isDynamicFieldChange(n))
+  const hasDf = dfNodes.length > 0
+  const [tab, setTab] = useState<'objects' | 'df'>('objects')
 
   // Every package touched by this tx, named in one bulk MVR reverse-resolution.
   const pkgIds = nodes
@@ -946,6 +980,8 @@ function ObjectChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) {
     [network, pkgIds.join(',')],
   )
   const mvrNames = names ?? {}
+
+  const showDf = hasDf && tab === 'df'
 
   return (
     <PanelSection
@@ -961,13 +997,49 @@ function ObjectChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) {
       {nodes.length === 0 ? (
         <Muted>no object changes.</Muted>
       ) : (
-        <div className="space-y-4">
-          <ObjectChangeGroup label="created" nodes={created} mvrNames={mvrNames} />
-          <ObjectChangeGroup label="mutated" nodes={mutated} mvrNames={mvrNames} />
-          <ObjectChangeGroup label="deleted" nodes={deleted} mvrNames={mvrNames} />
-        </div>
+        <>
+          {/* No tabs unless there are dynamic-field changes to split out. */}
+          {hasDf && (
+            <div className="border-line mb-4 flex gap-1 border-b">
+              <TabButton active={tab === 'objects'} onClick={() => setTab('objects')}>
+                objects · {objNodes.length}
+              </TabButton>
+              <TabButton active={tab === 'df'} onClick={() => setTab('df')}>
+                dynamic fields · {dfNodes.length}
+              </TabButton>
+            </div>
+          )}
+          <ObjectChangeList
+            nodes={showDf ? dfNodes : objNodes}
+            mvrNames={mvrNames}
+            empty={showDf ? 'no dynamic field changes.' : 'no object changes.'}
+          />
+        </>
       )}
     </PanelSection>
+  )
+}
+
+/** The created / mutated / deleted grouping for a set of object-change nodes. */
+function ObjectChangeList({
+  nodes,
+  mvrNames,
+  empty,
+}: {
+  nodes: ObjectChangeNode[]
+  mvrNames: Record<string, string>
+  empty: string
+}) {
+  if (nodes.length === 0) return <Muted>{empty}</Muted>
+  const created = nodes.filter((n) => n.idCreated && !n.idDeleted)
+  const deleted = nodes.filter((n) => n.idDeleted)
+  const mutated = nodes.filter((n) => !n.idCreated && !n.idDeleted)
+  return (
+    <div className="space-y-4">
+      <ObjectChangeGroup label="created" nodes={created} mvrNames={mvrNames} />
+      <ObjectChangeGroup label="mutated" nodes={mutated} mvrNames={mvrNames} />
+      <ObjectChangeGroup label="deleted" nodes={deleted} mvrNames={mvrNames} />
+    </div>
   )
 }
 
@@ -977,7 +1049,7 @@ function ObjectChangeGroup({
   mvrNames,
 }: {
   label: string
-  nodes: NonNullable<SuiTransaction['effects']>['objectChanges']['nodes']
+  nodes: ObjectChangeNode[]
   mvrNames: Record<string, string>
 }) {
   if (nodes.length === 0) return null
@@ -991,7 +1063,7 @@ function ObjectChangeGroup({
           // A created/mutated package has no `asMoveObject` — surface its type as
           // "package" (with its MVR name when one is registered) instead of blank.
           const isPackage = !!n.outputState?.asMovePackage
-          const type = n.outputState?.asMoveObject?.contents?.type.repr
+          const type = changeType(n)
           const name = mvrNames[n.address]
           return (
             <li key={n.address} className="flex flex-col gap-1 py-2 sm:flex-row sm:items-center sm:gap-3">
@@ -1026,12 +1098,54 @@ function ObjectChangeGroup({
   )
 }
 
+/** Group a raw integer amount with thousands separators — the fallback when a
+ * coin's decimals aren't known (no registered CoinMetadata, or still loading). */
+function rawAmount(raw: string | null): string {
+  if (raw == null) return '—'
+  try {
+    return BigInt(raw).toLocaleString('en-US')
+  } catch {
+    return raw
+  }
+}
+
 function BalanceChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) {
+  const { network } = useNetwork()
   const nodes = fx.balanceChanges.nodes
+  // Balance changes can run to hundreds of rows (e.g. a mass airdrop / claim),
+  // so the list is collapsed by default — and the per-coin metadata fetch is
+  // deferred until it's actually opened.
+  const [open, setOpen] = useState(false)
+
+  // Amounts are raw integers in each coin's own smallest unit, so they can only
+  // be rendered as a decimal once we know that coin's decimals — fetch the
+  // metadata (decimals + symbol) for every coin type referenced, in one request.
+  const coinTypes = nodes
+    .map((n) => n.coinType?.repr)
+    .filter((t): t is string => !!t)
+  const { data: meta } = useAsync(
+    (signal) =>
+      open
+        ? fetchCoinMetadata(network, coinTypes, signal)
+        : Promise.resolve(new Map<string, CoinMeta>()),
+    [network, open, coinTypes.join(',')],
+  )
+
   return (
     <PanelSection
       index={2}
-      label="Balance changes"
+      label={
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          title={open ? 'collapse' : 'expand'}
+          className="hover:text-primary inline-flex items-center gap-1.5 transition-colors"
+        >
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <span className="panel-label">Balance changes</span>
+        </button>
+      }
       action={
         <span className="text-muted font-mono text-xs">
           {nodes.length}
@@ -1039,25 +1153,32 @@ function BalanceChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) 
         </span>
       }
     >
-      {nodes.length === 0 ? (
+      {!open ? null : nodes.length === 0 ? (
         <Muted>no balance changes.</Muted>
       ) : (
         <ul className="divide-line divide-y font-mono text-xs">
           {nodes.map((n, i) => {
             const positive = n.amount != null && BigInt(n.amount) >= 0n
+            const m = n.coinType ? meta?.get(n.coinType.repr) : undefined
+            // Scale by the coin's decimals + label with its symbol when known;
+            // otherwise show the raw integer (never assume SUI / 9 decimals).
+            const amount = m
+              ? formatTokenAmount(n.amount, m.decimals, m.symbol)
+              : rawAmount(n.amount)
             return (
               <li key={i} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
                 <span className="flex items-center gap-2">
                   {n.owner ? <LinkedHash value={n.owner.address} /> : <Muted>—</Muted>}
                   {n.coinType && (
-                    <span className="text-muted" title={n.coinType.repr}>
+                    <span className="text-muted flex items-center gap-1.5" title={n.coinType.repr}>
+                      <CoinIcon url={m?.iconUrl} symbol={m?.symbol} className="h-4 w-4" />
                       {formatType(n.coinType.repr)}
                     </span>
                   )}
                 </span>
                 <span className={positive ? 'text-secondary' : 'text-danger'}>
                   {positive ? '+' : ''}
-                  {formatSui(n.amount)}
+                  {amount}
                 </span>
               </li>
             )
