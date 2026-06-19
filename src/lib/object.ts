@@ -305,11 +305,18 @@ export async function fetchDynamicFields(
   return mapPage(data.address?.dynamicFields, (n) => n)
 }
 
+// Sui GraphQL rejects any query over ~5000 bytes (and over 300 nodes). With each
+// id inlined (~120 bytes/selection), 30 aliased lookups stays safely under both —
+// so a large fan-out (e.g. a PTB with hundreds of object inputs) is split into
+// several requests run in parallel rather than one over-limit query.
+const OBJECT_TYPES_CHUNK = 30
+
 /**
- * Resolve the concrete Move type of many objects in a single request, by id.
- * The service has no `objectIds` filter, so we fan out with aliased `object()`
- * selections. Ids are inlined (they're validated 0x-hex from on-chain data).
- * Returns a map id → type repr (`null` when the object has no Move type).
+ * Resolve the concrete Move type of many objects by id. The service has no
+ * `objectIds` filter, so we fan out with aliased `object()` selections (ids
+ * inlined — they're validated 0x-hex from on-chain data), batched to stay under
+ * the query-size cap. Returns a map id → type repr (`null` when the object has
+ * no Move type).
  */
 export async function fetchObjectTypes(
   network: Network,
@@ -317,19 +324,29 @@ export async function fetchObjectTypes(
   signal?: AbortSignal,
 ): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>()
-  if (ids.length === 0) return out
-  const selections = ids
-    .map(
-      (id, i) =>
-        `o${i}: object(address: "${id}") { asMoveObject { contents { type { repr } } } }`,
-    )
-    .join('\n')
-  const { data } = await gqlRequest<
-    Record<string, { asMoveObject: { contents: { type: { repr: string } } | null } | null } | null>
-  >(network, `query ObjectTypes {\n${selections}\n}`, {}, signal)
-  ids.forEach((id, i) => {
-    out.set(id, data[`o${i}`]?.asMoveObject?.contents?.type.repr ?? null)
-  })
+  const unique = [...new Set(ids)]
+  if (unique.length === 0) return out
+
+  const chunks: string[][] = []
+  for (let i = 0; i < unique.length; i += OBJECT_TYPES_CHUNK) {
+    chunks.push(unique.slice(i, i + OBJECT_TYPES_CHUNK))
+  }
+  await Promise.all(
+    chunks.map(async (chunk) => {
+      const selections = chunk
+        .map(
+          (id, i) =>
+            `o${i}: object(address: "${id}") { asMoveObject { contents { type { repr } } } }`,
+        )
+        .join('\n')
+      const { data } = await gqlRequest<
+        Record<string, { asMoveObject: { contents: { type: { repr: string } } | null } | null } | null>
+      >(network, `query ObjectTypes {\n${selections}\n}`, {}, signal)
+      chunk.forEach((id, i) => {
+        out.set(id, data[`o${i}`]?.asMoveObject?.contents?.type.repr ?? null)
+      })
+    }),
+  )
   return out
 }
 

@@ -1,11 +1,16 @@
 /**
- * Transaction fetching over Sui GraphQL. One query gets the overview (sender,
- * gas, status, timing), the programmable-transaction block (typed inputs and
- * the command pipeline with decoded argument wiring), and the effects (object
- * changes, balance changes, events). Shapes mirror the schema's unions exactly
- * — see the inline fragments on `TransactionKind`, `TransactionInput`,
- * `Command`, and `TransactionArgument`.
+ * Transaction fetching. The execution *results* (status, gas charged, object /
+ * balance changes, events) come from Sui GraphQL `effects`; the transaction
+ * *definition* (sender, gas, typed inputs, and the command pipeline with decoded
+ * argument wiring + concrete type arguments) is decoded locally from the compact
+ * `transactionBcs` using the SDK's `TransactionData` schema. Object-input types
+ * and MoveCall function signatures — the enrichment the structured GraphQL would
+ * have inlined (and duplicated per call) — are resolved in batched, session-
+ * cached follow-ups. The exported `SuiTransaction` shape is unchanged, so the
+ * views consume it exactly as before.
  */
+import { bcs, type BcsType } from '@mysten/sui/bcs'
+import { fromBase64 } from '@mysten/sui/utils'
 import { gqlRequest } from './graphql'
 import { escapeRegExp } from './format'
 import { fetchObjectTypes } from './object'
@@ -13,79 +18,22 @@ import { mapBackwardPage, type Page, type PageArgs } from './pagination'
 import type { MoveFunctionSignature } from './move'
 import type { Network } from '@/context/network-context'
 
+// We fetch only what BCS can't give us: the digest, a cheap `kind` discriminator,
+// the sender, and the execution `effects`. The whole transaction *definition*
+// (gas, inputs, commands + concrete type args) is decoded locally from
+// `transactionBcs` — far smaller on the wire than the structured `inputs`/
+// `commands` tree (which re-fetches every object type + full function signature,
+// duplicating a signature per call) and offloads that enrichment to cached,
+// batched follow-ups (object types + unique function signatures). `kind` and
+// `sender` stay here as tiny scalars so system transactions — whose kinds the
+// SDK BCS schema can't decode and which carry no commands anyway — still render.
 const TRANSACTION_QUERY = `
 query Transaction($digest: String!) {
   transaction(digest: $digest) {
     digest
-    # Fully-resolved JSON form of the tx. The structured \`commands\` path below
-    # has no \`typeArguments\` on a MoveCall, but this does — we read the concrete
-    # call type args from here and attach them by command index (see fetch).
-    transactionJson
+    kind { __typename }
     sender { address }
-    gasInput {
-      gasSponsor { address }
-      gasPrice
-      gasBudget
-      gasPayment(first: 10) { nodes { address } }
-    }
-    kind {
-      __typename
-      ... on ProgrammableTransaction {
-        inputs(first: 50) {
-          pageInfo { hasNextPage }
-          nodes {
-            __typename
-            ... on Pure { bytes }
-            ... on MoveValue { type { repr } json }
-            ... on OwnedOrImmutable { object { ...InputObjectFields } }
-            ... on SharedInput { address initialSharedVersion mutable }
-            ... on Receiving { object { ...InputObjectFields } }
-            ... on BalanceWithdraw { type { repr } }
-          }
-        }
-        commands(first: 50) {
-          pageInfo { hasNextPage }
-          nodes {
-            __typename
-            ... on MoveCallCommand {
-              function {
-                module { package { address } name }
-                name
-                isEntry
-                visibility
-                typeParameters { constraints }
-                parameters { repr }
-                return { repr }
-              }
-              arguments { ...ArgFields }
-            }
-            ... on SplitCoinsCommand {
-              coin { ...ArgFields }
-              amounts { ...ArgFields }
-            }
-            ... on TransferObjectsCommand {
-              inputs { ...ArgFields }
-              address { ...ArgFields }
-            }
-            ... on MergeCoinsCommand {
-              coin { ...ArgFields }
-              coins { ...ArgFields }
-            }
-            ... on MakeMoveVecCommand {
-              type { repr }
-              elements { ...ArgFields }
-            }
-            ... on PublishCommand { modules dependencies }
-            ... on UpgradeCommand {
-              modules
-              dependencies
-              currentPackage
-              upgradeTicket { ...ArgFields }
-            }
-          }
-        }
-      }
-    }
+    transactionBcs
     effects {
       status
       timestamp
@@ -128,19 +76,6 @@ query Transaction($digest: String!) {
       }
     }
   }
-}
-
-fragment ArgFields on TransactionArgument {
-  __typename
-  ... on Input { ix }
-  ... on TxResult { cmd ix }
-  ... on GasCoin { _ }
-}
-
-fragment InputObjectFields on Object {
-  address
-  version
-  asMoveObject { contents { type { repr } } }
 }
 `
 
@@ -290,66 +225,510 @@ export interface SuiTransaction {
   } | null
 }
 
-/** Fetch a transaction by digest. `transaction` is `null` when not found. */
+/** The GraphQL response: everything BCS can't give us. The definition is decoded
+ *  from `transactionBcs`; `kind`/`sender` stay as scalars so system transactions
+ *  (not BCS-decodable, no commands) still render from their effects. */
+interface TxQueryResult {
+  digest: string | null
+  kind: { __typename: string } | null
+  sender: { address: string } | null
+  transactionBcs: string | null
+  effects: SuiTransaction['effects']
+}
+
+/**
+ * Fetch a transaction by digest. `null` when not found. For a programmable
+ * transaction the whole definition is decoded locally from `transactionBcs`,
+ * with object-input types and function signatures resolved in batched, cached
+ * follow-ups; system transactions render from `kind`/`sender`/`effects` alone.
+ */
 export async function fetchTransaction(
   network: Network,
   digest: string,
   signal?: AbortSignal,
 ): Promise<SuiTransaction | null> {
-  const { data } = await gqlRequest<{
-    transaction: (SuiTransaction & { transactionJson?: unknown }) | null
-  }>(network, TRANSACTION_QUERY, { digest }, signal)
-
-  // Owned/Receiving inputs carry their Move type already; shared inputs don't
-  // expose the object, so resolve those types in one batched follow-up query.
+  const { data } = await gqlRequest<{ transaction: TxQueryResult | null }>(
+    network,
+    TRANSACTION_QUERY,
+    { digest },
+    signal,
+  )
   const tx = data.transaction
-  const kind = tx?.kind
-  if (kind?.__typename === 'ProgrammableTransaction') {
-    const shared = kind.inputs.nodes.filter(
-      (n): n is Extract<TxInput, { __typename: 'SharedInput' }> =>
-        n.__typename === 'SharedInput',
-    )
-    if (shared.length > 0) {
-      const types = await fetchObjectTypes(
-        network,
-        shared.map((s) => s.address),
-        signal,
-      )
-      for (const s of shared) s.type = types.get(s.address) ?? null
+  if (tx == null) return null
+
+  const result: SuiTransaction = {
+    digest: tx.digest,
+    sender: tx.sender,
+    gasInput: null,
+    // System kinds aren't BCS-decodable; carry the discriminator straight through.
+    kind:
+      tx.kind && tx.kind.__typename !== 'ProgrammableTransaction'
+        ? { __typename: tx.kind.__typename as SystemTransactionKind }
+        : null,
+    effects: tx.effects,
+  }
+
+  if (tx.kind?.__typename !== 'ProgrammableTransaction') return result
+
+  const v1 =
+    typeof tx.transactionBcs === 'string' ? decodeTxData(tx.transactionBcs) : null
+  const ptb = v1?.kind?.ProgrammableTransaction
+  const gas = v1?.gasData
+
+  if (gas) {
+    result.gasInput = {
+      gasSponsor: { address: gas.owner },
+      gasPrice: gas.price,
+      gasBudget: gas.budget,
+      gasPayment: { nodes: gas.payment.map((p) => ({ address: p.objectId })) },
+    }
+  }
+
+  // Two batched, session-cached follow-ups recover the enrichment the structured
+  // query used to inline: every object input's Move type, and each *unique*
+  // MoveCall's function signature (deduped, so a signature is fetched at most once
+  // — within this PTB and across transactions).
+  const objectIds = ptb ? collectObjectInputIds(ptb.inputs) : []
+  const calls = ptb
+    ? ptb.commands
+        .filter(
+          (c): c is Extract<BcsCommand, { $kind: 'MoveCall' }> =>
+            c.$kind === 'MoveCall',
+        )
+        .map((c) => c.MoveCall)
+    : []
+  const [objTypes, sigs] = await Promise.all([
+    objectIds.length
+      ? fetchObjectTypes(network, objectIds, signal)
+      : Promise.resolve(new Map<string, string | null>()),
+    calls.length
+      ? resolveFunctionSignatures(network, calls, signal)
+      : Promise.resolve(new Map<string, MoveFunctionSignature | null>()),
+  ])
+
+  const pureTypes = ptb ? inferPureTypes(ptb.commands, sigs) : new Map<number, string>()
+  // BCS carries the full input/command lists (no 50-item page cap), so these are
+  // always complete.
+  result.kind = {
+    __typename: 'ProgrammableTransaction',
+    inputs: {
+      pageInfo: { hasNextPage: false },
+      nodes: ptb ? buildInputs(ptb.inputs, objTypes, pureTypes) : [],
+    },
+    commands: {
+      pageInfo: { hasNextPage: false },
+      nodes: ptb ? buildCommands(ptb.commands, sigs) : [],
+    },
+  }
+  return result
+}
+
+/* ── BCS-decoded transaction-definition shapes ──────────────────────────── */
+// The slices of a decoded `bcs.TransactionData` we read. Enum members decode to
+// `{ $kind: Variant, [Variant]: payload }`; u64s decode to strings, addresses to
+// `0x`-padded hex, and `TypeTag`s to `pkg::module::Type` repr strings.
+
+type BcsArgument =
+  | { $kind: 'GasCoin' }
+  | { $kind: 'Input'; Input: number }
+  | { $kind: 'Result'; Result: number }
+  | { $kind: 'NestedResult'; NestedResult: [number, number] }
+
+interface BcsObjectRef {
+  objectId: string
+  version: string
+  digest: string
+}
+interface BcsSharedRef {
+  objectId: string
+  initialSharedVersion: string
+  mutable: boolean
+}
+type BcsObjectArg =
+  | { $kind: 'ImmOrOwnedObject'; ImmOrOwnedObject: BcsObjectRef }
+  | { $kind: 'SharedObject'; SharedObject: BcsSharedRef }
+  | { $kind: 'Receiving'; Receiving: BcsObjectRef }
+
+type BcsInput =
+  | { $kind: 'Pure'; Pure: { bytes: string } }
+  | { $kind: 'Object'; Object: BcsObjectArg }
+  | { $kind: 'FundsWithdrawal'; FundsWithdrawal: { typeArg?: { Balance?: string } } }
+
+interface BcsMoveCall {
+  package: string
+  module: string
+  function: string
+  typeArguments: string[]
+  arguments: BcsArgument[]
+}
+type BcsCommand =
+  | { $kind: 'MoveCall'; MoveCall: BcsMoveCall }
+  | { $kind: 'TransferObjects'; TransferObjects: { objects: BcsArgument[]; address: BcsArgument } }
+  | { $kind: 'SplitCoins'; SplitCoins: { coin: BcsArgument; amounts: BcsArgument[] } }
+  | { $kind: 'MergeCoins'; MergeCoins: { destination: BcsArgument; sources: BcsArgument[] } }
+  | { $kind: 'MakeMoveVec'; MakeMoveVec: { type: string | null; elements: BcsArgument[] } }
+  | { $kind: 'Publish'; Publish: { modules: string[]; dependencies: string[] } }
+  | {
+      $kind: 'Upgrade'
+      Upgrade: { modules: string[]; dependencies: string[]; package: string; ticket: BcsArgument }
     }
 
-    // MoveCall type arguments aren't in the structured schema — graft them on
-    // from `transactionJson` by command index (the two command lists are
-    // parallel; `commands` may be truncated at 50, but it's a prefix so indices
-    // still line up).
-    const byCmd = commandTypeArguments(tx?.transactionJson)
-    kind.commands.nodes.forEach((cmd, i) => {
-      if (cmd.__typename === 'MoveCallCommand') cmd.typeArguments = byCmd[i] ?? []
-    })
+interface BcsTransactionDataV1 {
+  sender: string
+  gasData: { payment: BcsObjectRef[]; owner: string; price: string; budget: string }
+  kind: { ProgrammableTransaction?: { inputs: BcsInput[]; commands: BcsCommand[] } }
+}
+
+/** Decode the transaction definition from base64 BCS; `null` if the SDK schema
+ *  can't parse it (e.g. a system-transaction kind it doesn't model). */
+function decodeTxData(transactionBcs: string): BcsTransactionDataV1 | null {
+  try {
+    const decoded = bcs.TransactionData.fromBase64(transactionBcs) as {
+      V1?: BcsTransactionDataV1
+    }
+    return decoded.V1 ?? null
+  } catch {
+    return null
   }
-  return tx
+}
+
+/** Map a decoded BCS argument onto the existing `TxArgument` wiring shape. */
+function toTxArgument(a: BcsArgument): TxArgument {
+  switch (a.$kind) {
+    case 'GasCoin':
+      return { __typename: 'GasCoin' }
+    case 'Input':
+      return { __typename: 'Input', ix: a.Input }
+    case 'Result':
+      return { __typename: 'TxResult', cmd: a.Result, ix: null }
+    case 'NestedResult':
+      return { __typename: 'TxResult', cmd: a.NestedResult[0], ix: a.NestedResult[1] }
+  }
+}
+
+/** The unique object ids referenced by object inputs (for batched type lookup). */
+function collectObjectInputIds(inputs: BcsInput[]): string[] {
+  const ids: string[] = []
+  for (const inp of inputs) {
+    if (inp.$kind !== 'Object') continue
+    const o = inp.Object
+    ids.push(
+      o.$kind === 'SharedObject'
+        ? o.SharedObject.objectId
+        : o.$kind === 'Receiving'
+          ? o.Receiving.objectId
+          : o.ImmOrOwnedObject.objectId,
+    )
+  }
+  return [...new Set(ids)]
+}
+
+function objRefToInput(
+  ref: BcsObjectRef,
+  objTypes: Map<string, string | null>,
+): InputObject {
+  const type = objTypes.get(ref.objectId) ?? null
+  return {
+    address: ref.objectId,
+    version: Number(ref.version),
+    asMoveObject: type ? { contents: { type: { repr: type } } } : null,
+  }
+}
+
+/** Build the typed `TxInput` list — object inputs gain their resolved Move type,
+ *  pure inputs are decoded to a typed value where we can infer the type. */
+function buildInputs(
+  inputs: BcsInput[],
+  objTypes: Map<string, string | null>,
+  pureTypes: Map<number, string>,
+): TxInput[] {
+  return inputs.map((inp, i): TxInput => {
+    if (inp.$kind === 'Pure') {
+      const decoded = decodePure(pureTypes.get(i) ?? null, inp.Pure.bytes)
+      return decoded
+        ? { __typename: 'MoveValue', type: { repr: decoded.repr }, json: decoded.json }
+        : { __typename: 'Pure', bytes: inp.Pure.bytes }
+    }
+    if (inp.$kind === 'FundsWithdrawal') {
+      const repr = inp.FundsWithdrawal?.typeArg?.Balance ?? null
+      return { __typename: 'BalanceWithdraw', type: repr ? { repr } : null }
+    }
+    const o = inp.Object
+    if (o.$kind === 'SharedObject') {
+      return {
+        __typename: 'SharedInput',
+        address: o.SharedObject.objectId,
+        initialSharedVersion: Number(o.SharedObject.initialSharedVersion),
+        mutable: o.SharedObject.mutable,
+        type: objTypes.get(o.SharedObject.objectId) ?? null,
+      }
+    }
+    if (o.$kind === 'Receiving') {
+      return { __typename: 'Receiving', object: objRefToInput(o.Receiving, objTypes) }
+    }
+    return { __typename: 'OwnedOrImmutable', object: objRefToInput(o.ImmOrOwnedObject, objTypes) }
+  })
+}
+
+/** Build the `TxCommand` list, attaching each MoveCall's resolved signature
+ *  (a minimal target when the signature couldn't be fetched). */
+function buildCommands(
+  commands: BcsCommand[],
+  sigs: Map<string, MoveFunctionSignature | null>,
+): TxCommand[] {
+  return commands.map((c): TxCommand => {
+    switch (c.$kind) {
+      case 'MoveCall': {
+        const mc = c.MoveCall
+        const sig = sigs.get(fnKey(mc.package, mc.module, mc.function))
+        const fn: MoveFn = {
+          name: mc.function,
+          isEntry: sig?.isEntry ?? null,
+          visibility: sig?.visibility ?? null,
+          typeParameters: sig?.typeParameters ?? [],
+          parameters: sig?.parameters ?? [],
+          return: sig?.return ?? [],
+          module: { package: { address: mc.package }, name: mc.module },
+        }
+        return {
+          __typename: 'MoveCallCommand',
+          function: fn,
+          arguments: mc.arguments.map(toTxArgument),
+          typeArguments: mc.typeArguments.slice(),
+        }
+      }
+      case 'TransferObjects':
+        return {
+          __typename: 'TransferObjectsCommand',
+          inputs: c.TransferObjects.objects.map(toTxArgument),
+          address: toTxArgument(c.TransferObjects.address),
+        }
+      case 'SplitCoins':
+        return {
+          __typename: 'SplitCoinsCommand',
+          coin: toTxArgument(c.SplitCoins.coin),
+          amounts: c.SplitCoins.amounts.map(toTxArgument),
+        }
+      case 'MergeCoins':
+        return {
+          __typename: 'MergeCoinsCommand',
+          coin: toTxArgument(c.MergeCoins.destination),
+          coins: c.MergeCoins.sources.map(toTxArgument),
+        }
+      case 'MakeMoveVec':
+        return {
+          __typename: 'MakeMoveVecCommand',
+          type: c.MakeMoveVec.type ? { repr: c.MakeMoveVec.type } : null,
+          elements: c.MakeMoveVec.elements.map(toTxArgument),
+        }
+      case 'Publish':
+        return {
+          __typename: 'PublishCommand',
+          modules: c.Publish.modules,
+          dependencies: c.Publish.dependencies,
+        }
+      case 'Upgrade':
+        return {
+          __typename: 'UpgradeCommand',
+          modules: c.Upgrade.modules,
+          dependencies: c.Upgrade.dependencies,
+          currentPackage: c.Upgrade.package,
+          upgradeTicket: toTxArgument(c.Upgrade.ticket),
+        }
+    }
+  })
+}
+
+/* ── pure-value decoding ─────────────────────────────────────────────────── */
+
+/** Strip a leading reference marker (pures are never references — defensive). */
+function stripRef(repr: string): string {
+  return repr.replace(/^&mut\s+/, '').replace(/^&\s+/, '').trim()
+}
+
+/** A bcs decoder for a Move value, loosely typed since we only ever `.parse`. */
+type ValueBcs = BcsType<unknown>
+const loose = (t: unknown) => t as ValueBcs
+
+/**
+ * The bcs schema to decode a pure input of a given Move *value* type, or `null`
+ * for a type we don't model (caller falls back to the raw bytes). Addresses /
+ * object ids decode to `0x`-hex so the view can link them; numbers (u64+) decode
+ * to strings; the rest map to their natural JSON.
+ */
+function bcsForValueType(repr: string): ValueBcs | null {
+  const t = stripRef(repr)
+  switch (t) {
+    case 'bool':
+      return loose(bcs.bool())
+    case 'u8':
+      return loose(bcs.u8())
+    case 'u16':
+      return loose(bcs.u16())
+    case 'u32':
+      return loose(bcs.u32())
+    case 'u64':
+      return loose(bcs.u64())
+    case 'u128':
+      return loose(bcs.u128())
+    case 'u256':
+      return loose(bcs.u256())
+    case 'address':
+      return loose(bcs.Address)
+  }
+  if (/^0x0*2::object::(ID|UID)$/.test(t)) return loose(bcs.Address)
+  if (/^0x0*1::(string::String|ascii::String)$/.test(t)) return loose(bcs.string())
+  const vec = /^vector<(.+)>$/.exec(t)
+  if (vec) {
+    const inner = bcsForValueType(vec[1])
+    return inner ? loose(bcs.vector(inner)) : null
+  }
+  const opt = /^0x0*1::option::Option<(.+)>$/.exec(t)
+  if (opt) {
+    const inner = bcsForValueType(opt[1])
+    return inner ? loose(bcs.option(inner)) : null
+  }
+  return null
+}
+
+/** Decode a pure input's bytes using its inferred Move value type → `{ repr,
+ *  json }`, or `null` when the type is unknown or the bytes don't decode. */
+function decodePure(
+  repr: string | null,
+  base64Bytes: string,
+): { repr: string; json: unknown } | null {
+  if (!repr) return null
+  const schema = bcsForValueType(repr)
+  if (!schema) return null
+  try {
+    return { repr, json: schema.parse(fromBase64(base64Bytes)) }
+  } catch {
+    return null
+  }
 }
 
 /**
- * Per-command MoveCall type arguments parsed out of `transactionJson`
- * (`kind.programmableTransaction.commands[i].moveCall.typeArguments`). Returns a
- * positional array aligned with the command list — `[]` for non-MoveCall
- * positions and when the field/JSON is absent. Treated as plain data: the
- * strings are rendered as type reprs only, never interpreted.
+ * Infer each pure input's Move value type from where it's first used as an
+ * argument: a MoveCall pairs `arguments[k]` with `parameters[k]` (the trailing
+ * `&TxContext` is runtime-supplied, so the prefix lines up — see `MoveFn`);
+ * split-coin amounts are `u64`, a transfer recipient is `address`, make-move-vec
+ * elements take the vec's element type. Inputs with no inferable type stay raw.
  */
-function commandTypeArguments(transactionJson: unknown): string[][] {
-  const commands = (
-    transactionJson as
-      | { kind?: { programmableTransaction?: { commands?: unknown } } }
-      | null
-      | undefined
-  )?.kind?.programmableTransaction?.commands
-  if (!Array.isArray(commands)) return []
-  return commands.map((c) => {
-    const ta = (c as { moveCall?: { typeArguments?: unknown } } | null)?.moveCall
-      ?.typeArguments
-    return Array.isArray(ta) ? ta.filter((t): t is string => typeof t === 'string') : []
-  })
+function inferPureTypes(
+  commands: BcsCommand[],
+  sigs: Map<string, MoveFunctionSignature | null>,
+): Map<number, string> {
+  const types = new Map<number, string>()
+  const note = (arg: BcsArgument, repr: string | null | undefined) => {
+    if (repr && arg.$kind === 'Input' && !types.has(arg.Input)) {
+      types.set(arg.Input, stripRef(repr))
+    }
+  }
+  for (const c of commands) {
+    if (c.$kind === 'MoveCall') {
+      const sig = sigs.get(fnKey(c.MoveCall.package, c.MoveCall.module, c.MoveCall.function))
+      c.MoveCall.arguments.forEach((a, k) => note(a, sig?.parameters[k]?.repr))
+    } else if (c.$kind === 'SplitCoins') {
+      c.SplitCoins.amounts.forEach((a) => note(a, 'u64'))
+    } else if (c.$kind === 'TransferObjects') {
+      note(c.TransferObjects.address, 'address')
+    } else if (c.$kind === 'MakeMoveVec' && c.MakeMoveVec.type) {
+      c.MakeMoveVec.elements.forEach((a) => note(a, c.MakeMoveVec.type))
+    }
+  }
+  return types
+}
+
+/* ── function-signature resolution (batched + session-cached) ────────────── */
+
+function fnKey(pkg: string, module: string, fn: string): string {
+  return `${pkg}::${module}::${fn}`
+}
+
+const FN_SIG_SELECTION =
+  'name visibility isEntry typeParameters { constraints } parameters { repr } return { repr }'
+
+/** Session cache of resolved signatures, keyed by `network|pkg::module::fn`. A
+ *  signature never changes, so this dedups across every transaction in a session. */
+const fnSigCache = new Map<string, Promise<MoveFunctionSignature | null>>()
+
+interface FnRef {
+  package: string
+  module: string
+  function: string
+}
+
+/** Fetch many function signatures in one aliased query (chunked at 50). */
+async function batchFetchFnSigs(
+  network: Network,
+  refs: FnRef[],
+  signal?: AbortSignal,
+): Promise<Map<string, MoveFunctionSignature | null>> {
+  const out = new Map<string, MoveFunctionSignature | null>()
+  for (let i = 0; i < refs.length; i += 50) {
+    const chunk = refs.slice(i, i + 50)
+    const varDecls = chunk
+      .flatMap((_, j) => [`$p${j}: SuiAddress!`, `$m${j}: String!`, `$f${j}: String!`])
+      .join(', ')
+    const selections = chunk
+      .map(
+        (_, j) =>
+          `a${j}: object(address: $p${j}) { asMovePackage { module(name: $m${j}) { function(name: $f${j}) { ${FN_SIG_SELECTION} } } } }`,
+      )
+      .join('\n')
+    const variables: Record<string, string> = {}
+    chunk.forEach((c, j) => {
+      variables[`p${j}`] = c.package
+      variables[`m${j}`] = c.module
+      variables[`f${j}`] = c.function
+    })
+    const { data } = await gqlRequest<
+      Record<
+        string,
+        { asMovePackage: { module: { function: MoveFunctionSignature | null } | null } | null } | null
+      >
+    >(network, `query FnSigs(${varDecls}) {\n${selections}\n}`, variables, signal)
+    chunk.forEach((c, j) => {
+      out.set(fnKey(c.package, c.module, c.function), data[`a${j}`]?.asMovePackage?.module?.function ?? null)
+    })
+  }
+  return out
+}
+
+/**
+ * Resolve each unique MoveCall's signature, session-cached so a given signature
+ * is fetched at most once. Cache misses go out in one batched query; a failed
+ * lookup (e.g. an aborted request) is evicted so a later view can retry, and is
+ * surfaced as `null` rather than failing the whole transaction.
+ */
+async function resolveFunctionSignatures(
+  network: Network,
+  calls: FnRef[],
+  signal?: AbortSignal,
+): Promise<Map<string, MoveFunctionSignature | null>> {
+  const unique = new Map<string, FnRef>()
+  for (const c of calls) unique.set(fnKey(c.package, c.module, c.function), c)
+
+  const missing = [...unique].filter(([k]) => !fnSigCache.has(`${network}|${k}`))
+  if (missing.length > 0) {
+    const batch = batchFetchFnSigs(network, missing.map(([, c]) => c), signal)
+    for (const [k] of missing) {
+      const cacheKey = `${network}|${k}`
+      const p = batch.then((m) => m.get(k) ?? null)
+      fnSigCache.set(cacheKey, p)
+      p.catch(() => fnSigCache.delete(cacheKey))
+    }
+  }
+
+  const out = new Map<string, MoveFunctionSignature | null>()
+  for (const [k] of unique) {
+    try {
+      out.set(k, (await fnSigCache.get(`${network}|${k}`)) ?? null)
+    } catch {
+      out.set(k, null)
+    }
+  }
+  return out
 }
 
 const MODULE_DISASSEMBLY_QUERY = `
