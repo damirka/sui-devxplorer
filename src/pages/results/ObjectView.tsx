@@ -459,7 +459,22 @@ function MoveObjectBody({
             <PanelSection
               label="Display definition"
               action={
-                def.data ? <LinkedHash value={def.data.address} /> : undefined
+                def.data ? (
+                  <span className="flex items-center gap-3">
+                    <span
+                      title={
+                        def.data.legacy
+                          ? '0x2::display::Display<T> (legacy)'
+                          : '0x2::display_registry::Display<T> (V2)'
+                      }
+                    >
+                      <Badge tone="muted">
+                        {def.data.legacy ? 'legacy' : 'V2'}
+                      </Badge>
+                    </span>
+                    <LinkedHash value={def.data.address} />
+                  </span>
+                ) : undefined
               }
             >
               {def.data && def.data.fields.length > 0 ? (

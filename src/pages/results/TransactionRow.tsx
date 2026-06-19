@@ -40,7 +40,6 @@ export function TransactionRow({
   sender,
   status,
   gas,
-  wrap = false,
   children,
 }: {
   index: number
@@ -52,18 +51,13 @@ export function TransactionRow({
   status: string | null
   /** Net gas used in MIST. Omit to hide the cell; `null` shows `—` (unknown). */
   gas?: bigint | null
-  /** Allow the row to wrap — denser rows (version history) pack in more cells. */
-  wrap?: boolean
   /** Extra cell(s) rendered after the timestamp (e.g. a version link). */
   children?: ReactNode
 }) {
+  // Always wrap — it only breaks to a second line when the row can't fit (mobile),
+  // so the columns never force a page-wide horizontal scroll.
   return (
-    <li
-      className={cn(
-        'flex items-center gap-x-3 py-2.5',
-        wrap && 'flex-wrap gap-y-1',
-      )}
-    >
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
       <RowIndex n={index} />
       <span className="inline-flex w-[7rem] shrink-0">
         {digest ? <LinkedHash value={digest} /> : <span className="text-muted">—</span>}

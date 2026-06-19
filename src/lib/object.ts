@@ -806,13 +806,17 @@ export async function fetchAllModules(
   return mods
 }
 
+// A type's Display can be registered in either of two on-chain systems: the
+// modern `0x2::display_registry::Display<T>` or the legacy `0x2::display::
+// Display<T>`. Both hold the same `fields` VecMap template; we fetch both (one
+// query, aliased) and report which one backs the rendered output.
 const DISPLAY_DEF_QUERY = `
-query DisplayDef($type: String!) {
-  objects(first: 1, filter: { type: $type }) {
-    nodes {
-      address
-      asMoveObject { contents { json } }
-    }
+query DisplayDef($modern: String!, $legacy: String!) {
+  modern: objects(first: 1, filter: { type: $modern }) {
+    nodes { address asMoveObject { contents { json } } }
+  }
+  legacy: objects(first: 1, filter: { type: $legacy }) {
+    nodes { address asMoveObject { contents { json } } }
   }
 }
 `
@@ -823,6 +827,9 @@ export interface DisplayDefinition {
   version: number | null
   /** The raw template: field name → format string with `{placeholders}`. */
   fields: { key: string; value: string }[]
+  /** Which Display system it lives in: `true` = legacy `0x2::display::Display<T>`,
+   *  `false` = modern `0x2::display_registry::Display<T>`. */
+  legacy: boolean
 }
 
 interface DisplayContentsJson {
@@ -830,27 +837,39 @@ interface DisplayContentsJson {
   version?: number
 }
 
+type DisplayNode = {
+  address: string
+  asMoveObject: { contents: { json: unknown } | null } | null
+}
+
 /**
- * Fetch the on-chain Display definition for a Move type — the `0x2::display::
- * Display<T>` object whose `fields` VecMap holds the unrendered templates that
- * `MoveValue.display.output` is computed from. `null` when no Display is set.
+ * Fetch the on-chain Display definition for a Move type — the `Display<T>`
+ * object whose `fields` VecMap holds the unrendered templates that
+ * `MoveValue.display.output` is computed from. Looks up both the modern
+ * (`0x2::display_registry`) and legacy (`0x2::display`) systems, preferring the
+ * modern one when both exist (it supersedes the legacy entry). `null` when
+ * neither is set.
  */
 export async function fetchDisplayDefinition(
   network: Network,
   objectType: string,
   signal?: AbortSignal,
 ): Promise<DisplayDefinition | null> {
-  const type = `0x2::display::Display<${objectType}>`
   const { data } = await gqlRequest<{
-    objects: {
-      nodes: {
-        address: string
-        asMoveObject: { contents: { json: unknown } | null } | null
-      }[]
-    }
-  }>(network, DISPLAY_DEF_QUERY, { type }, signal)
+    modern: { nodes: DisplayNode[] }
+    legacy: { nodes: DisplayNode[] }
+  }>(
+    network,
+    DISPLAY_DEF_QUERY,
+    {
+      modern: `0x2::display_registry::Display<${objectType}>`,
+      legacy: `0x2::display::Display<${objectType}>`,
+    },
+    signal,
+  )
 
-  const node = data.objects.nodes[0]
+  const modern = data.modern.nodes[0]
+  const node = modern ?? data.legacy.nodes[0]
   const json = node?.asMoveObject?.contents?.json as
     | DisplayContentsJson
     | undefined
@@ -860,6 +879,7 @@ export async function fetchDisplayDefinition(
     address: node.address,
     version: json.version ?? null,
     fields: json.fields?.contents ?? [],
+    legacy: !modern,
   }
 }
 

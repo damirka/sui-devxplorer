@@ -129,7 +129,7 @@ function HistoryRow({
     >
       {/* Fixed-width version + timestamp columns so the owner / digest line up
           across rows (a 1- vs 2-digit day no longer shifts everything). */}
-      <div className="flex items-center gap-x-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
         {/* Expand the per-transaction object diff (only when a producing tx is
             known). An explicit label, not a bare chevron, so it's discoverable;
             both labels are the same length, so the columns stay aligned. */}
@@ -160,7 +160,7 @@ function HistoryRow({
         >
           v{v.version}
         </Link>
-        <span className="text-muted w-64 shrink-0 tabular-nums">
+        <span className="text-muted shrink-0 tabular-nums sm:w-64">
           {formatTimestamp(v.timestamp)}
         </span>
         {showOwners && ownerAddr && (

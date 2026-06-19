@@ -61,7 +61,6 @@ export function ObjectTransactions({
                 sender={v.sender}
                 status={v.status}
                 gas={v.gas}
-                wrap
               >
                 <Link
                   to={versionHref(v.version)}

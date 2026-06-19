@@ -1120,6 +1120,11 @@ function ObjectChanges({
   const { network } = useNetwork()
   const nodes = fx.objectChanges.nodes
 
+  // A failed transaction reverts every object change except the gas coin, so
+  // there's no contents diff to show — disable the per-object diff (pass no
+  // digest, which drops the "show changes" expander).
+  const diffDigest = fx.status === 'FAILURE' ? null : txDigest
+
   // Split dynamic-field changes onto their own tab; everything else (owned /
   // shared / immutable objects + packages) stays on the main tab.
   const dfNodes = nodes.filter(isDynamicFieldChange)
@@ -1171,7 +1176,7 @@ function ObjectChanges({
           <ObjectChangeList
             nodes={showDf ? dfNodes : objNodes}
             mvrNames={mvrNames}
-            txDigest={txDigest}
+            txDigest={diffDigest}
             empty={showDf ? 'no dynamic field changes.' : 'no object changes.'}
           />
         </>
