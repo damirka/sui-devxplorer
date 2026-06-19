@@ -204,7 +204,9 @@ function coinBalanceFromJson(json: unknown): string | null {
   return null
 }
 
-const COIN_VALUES_CHUNK = 50
+// Ids are inlined (~105 bytes/selection), so keep each request under Sui
+// GraphQL's ~5000-byte query cap (50 ids would overflow it).
+const COIN_VALUES_CHUNK = 30
 
 /**
  * The raw value (smallest unit) of each `Coin<T>` object, by object id — read

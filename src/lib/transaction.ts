@@ -18,15 +18,14 @@ import { mapBackwardPage, type Page, type PageArgs } from './pagination'
 import type { MoveFunctionSignature } from './move'
 import type { Network } from '@/context/network-context'
 
-// We fetch only what BCS can't give us: the digest, a cheap `kind` discriminator,
-// the sender, and the execution `effects`. The whole transaction *definition*
-// (gas, inputs, commands + concrete type args) is decoded locally from
-// `transactionBcs` — far smaller on the wire than the structured `inputs`/
-// `commands` tree (which re-fetches every object type + full function signature,
-// duplicating a signature per call) and offloads that enrichment to cached,
-// batched follow-ups (object types + unique function signatures). `kind` and
-// `sender` stay here as tiny scalars so system transactions — whose kinds the
-// SDK BCS schema can't decode and which carry no commands anyway — still render.
+// The whole transaction *definition* (gas, inputs, commands + concrete type
+// args) is decoded locally from `transactionBcs` — far smaller on the wire than
+// the structured `inputs`/`commands` tree (which re-fetched every object type +
+// a full function signature *per call*); that enrichment now comes from cached,
+// batched follow-ups. `digest`/`kind`/`sender` stay as tiny scalars so system
+// transactions — whose kinds the SDK BCS schema can't decode and which carry no
+// commands anyway — still render. (Effects stay on GraphQL; a future step could
+// move those to BCS too.)
 const TRANSACTION_QUERY = `
 query Transaction($digest: String!) {
   transaction(digest: $digest) {
@@ -658,40 +657,63 @@ interface FnRef {
   function: string
 }
 
-/** Fetch many function signatures in one aliased query (chunked at 50). */
+/** A single aliased signature lookup. Ids are inlined — the package is 0x-hex
+ *  and module/function are Move identifiers (`[A-Za-z0-9_]`), so neither can
+ *  break out of the string. */
+function fnSigSelection(ref: FnRef, alias: string): string {
+  return `${alias}: object(address: "${ref.package}") { asMovePackage { module(name: "${ref.module}") { function(name: "${ref.function}") { ${FN_SIG_SELECTION} } } } }`
+}
+
+// Sui GraphQL rejects a query over ~5000 bytes / 300 nodes. Each signature
+// lookup is ~13 nodes, so with selections inlined the byte budget binds first —
+// pack refs up to ~4000 bytes (and ≤20 for node headroom) per request.
+const FN_SIG_QUERY_BUDGET = 4000
+const FN_SIG_MAX_PER_QUERY = 20
+
+/** Group refs into batches whose rendered query stays under the size caps. */
+function chunkFnRefs(refs: FnRef[]): FnRef[][] {
+  const batches: FnRef[][] = []
+  let cur: FnRef[] = []
+  let bytes = 0
+  for (const ref of refs) {
+    const size = fnSigSelection(ref, 'a00').length + 1
+    if (cur.length > 0 && (bytes + size > FN_SIG_QUERY_BUDGET || cur.length >= FN_SIG_MAX_PER_QUERY)) {
+      batches.push(cur)
+      cur = []
+      bytes = 0
+    }
+    cur.push(ref)
+    bytes += size
+  }
+  if (cur.length > 0) batches.push(cur)
+  return batches
+}
+
+/** Fetch many function signatures, split into request-sized aliased queries run
+ *  in parallel. */
 async function batchFetchFnSigs(
   network: Network,
   refs: FnRef[],
   signal?: AbortSignal,
 ): Promise<Map<string, MoveFunctionSignature | null>> {
   const out = new Map<string, MoveFunctionSignature | null>()
-  for (let i = 0; i < refs.length; i += 50) {
-    const chunk = refs.slice(i, i + 50)
-    const varDecls = chunk
-      .flatMap((_, j) => [`$p${j}: SuiAddress!`, `$m${j}: String!`, `$f${j}: String!`])
-      .join(', ')
-    const selections = chunk
-      .map(
-        (_, j) =>
-          `a${j}: object(address: $p${j}) { asMovePackage { module(name: $m${j}) { function(name: $f${j}) { ${FN_SIG_SELECTION} } } } }`,
-      )
-      .join('\n')
-    const variables: Record<string, string> = {}
-    chunk.forEach((c, j) => {
-      variables[`p${j}`] = c.package
-      variables[`m${j}`] = c.module
-      variables[`f${j}`] = c.function
-    })
-    const { data } = await gqlRequest<
-      Record<
-        string,
-        { asMovePackage: { module: { function: MoveFunctionSignature | null } | null } | null } | null
-      >
-    >(network, `query FnSigs(${varDecls}) {\n${selections}\n}`, variables, signal)
-    chunk.forEach((c, j) => {
-      out.set(fnKey(c.package, c.module, c.function), data[`a${j}`]?.asMovePackage?.module?.function ?? null)
-    })
-  }
+  await Promise.all(
+    chunkFnRefs(refs).map(async (chunk) => {
+      const selections = chunk.map((ref, j) => fnSigSelection(ref, `a${j}`)).join('\n')
+      const { data } = await gqlRequest<
+        Record<
+          string,
+          { asMovePackage: { module: { function: MoveFunctionSignature | null } | null } | null } | null
+        >
+      >(network, `query FnSigs {\n${selections}\n}`, {}, signal)
+      chunk.forEach((ref, j) => {
+        out.set(
+          fnKey(ref.package, ref.module, ref.function),
+          data[`a${j}`]?.asMovePackage?.module?.function ?? null,
+        )
+      })
+    }),
+  )
   return out
 }
 
