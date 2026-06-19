@@ -60,13 +60,14 @@ export function ObjectTransactions({
                 timestamp={v.timestamp}
                 sender={v.sender}
                 status={v.status}
+                gas={v.gas}
                 wrap
               >
                 <Link
                   to={versionHref(v.version)}
                   title={`view this object at v${v.version}`}
                   className={cn(
-                    'shrink-0 tabular-nums hover:underline',
+                    'inline-block w-[6rem] shrink-0 tabular-nums hover:underline',
                     v.version === currentVersion ? 'text-primary' : 'text-muted',
                   )}
                 >

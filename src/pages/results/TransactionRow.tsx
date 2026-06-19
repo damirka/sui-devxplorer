@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
+import { Fuel } from 'lucide-react'
 import { RowIndex } from '@/components/ui/RowIndex'
 import { LinkedHash } from '@/components/ui/links'
-import { formatTimestamp } from '@/lib/format'
+import { formatSui, formatTimestamp } from '@/lib/format'
 import { cn } from '@/lib/cn'
 
 /** A transaction's execution status as a terminal word — green for success,
@@ -38,6 +39,7 @@ export function TransactionRow({
   timestamp,
   sender,
   status,
+  gas,
   wrap = false,
   children,
 }: {
@@ -48,6 +50,8 @@ export function TransactionRow({
   /** Sender address, shown as `by <hash>`; omit/null to hide. */
   sender?: string | null
   status: string | null
+  /** Net gas used in MIST. Omit to hide the cell; `null` shows `—` (unknown). */
+  gas?: bigint | null
   /** Allow the row to wrap — denser rows (version history) pack in more cells. */
   wrap?: boolean
   /** Extra cell(s) rendered after the timestamp (e.g. a version link). */
@@ -61,12 +65,25 @@ export function TransactionRow({
       )}
     >
       <RowIndex n={index} />
-      {digest ? <LinkedHash value={digest} /> : <span className="text-muted">—</span>}
-      <span className="text-muted shrink-0">{formatTimestamp(timestamp)}</span>
+      <span className="inline-flex w-[7rem] shrink-0">
+        {digest ? <LinkedHash value={digest} /> : <span className="text-muted">—</span>}
+      </span>
+      <span className="text-muted shrink-0 tabular-nums">
+        {formatTimestamp(timestamp)}
+      </span>
       {children}
       {sender && (
         <span className="text-muted inline-flex shrink-0 items-center gap-1.5">
           by <LinkedHash value={sender} />
+        </span>
+      )}
+      {gas !== undefined && (
+        <span
+          className="text-muted ml-auto inline-flex w-[8.5rem] shrink-0 items-center justify-end gap-1 tabular-nums"
+          title="gas used"
+        >
+          <Fuel size={12} />
+          {gas == null ? '—' : formatSui(gas)}
         </span>
       )}
       <TxStatus status={status} />

@@ -73,6 +73,7 @@ export function Txs({
               timestamp={tx.timestamp}
               sender={showSender ? tx.sender : null}
               status={tx.status}
+              gas={tx.gas}
             />
           )}
         </DataList>

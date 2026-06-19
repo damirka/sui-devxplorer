@@ -94,6 +94,11 @@ export function DynamicFields({
             const { target, derived } = rowFor(df)
             const derivedType = derived ? types?.get(derived) : null
             const vType = valueType(df)
+            // A dynamic *object* field holds a real object — surface its version
+            // and pin the row link to it, so you open the object as the field
+            // holds it (not just whatever its latest is).
+            const objVersion =
+              df.value.__typename === 'MoveObject' ? df.value.version : null
             // The key json (`{labels:[…]}`, `2`, …) identifies the entry — but
             // a `dummy_field` marker key carries nothing, so drop it there.
             const keyLabel = isDummyField(df.name.json)
@@ -102,8 +107,12 @@ export function DynamicFields({
             return (
               <li key={i}>
                 <Link
-                  to={searchHref(target)}
-                  title={`open ${target}`}
+                  to={searchHref(target, objVersion)}
+                  title={
+                    objVersion != null
+                      ? `open ${target} at v${objVersion}`
+                      : `open ${target}`
+                  }
                   className="hover:bg-surface-2 group -mx-2 flex items-center gap-2 px-2 py-2.5 transition-colors"
                 >
                   <RowIndex n={i + 1} />
@@ -143,6 +152,14 @@ export function DynamicFields({
                           )}
                         </span>
                       </HoverCard>
+                      {objVersion != null && (
+                        <span
+                          className="text-muted shrink-0 tabular-nums"
+                          title="object version"
+                        >
+                          v{objVersion}
+                        </span>
+                      )}
                       {keyLabel && (
                         <span
                           className="hash text-muted ml-auto max-w-[45%] shrink-0 truncate"

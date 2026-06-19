@@ -113,16 +113,20 @@ export async function reverseResolveMvrBulk(
  * (free), otherwise the reverse-resolution endpoint. Reverse only succeeds for
  * packages whose owner set an on-chain *default name* — a package without one
  * (e.g. `@potatoes/date`) simply resolves to `null`.
+ *
+ * The reverse lookup goes through the session cache below, so the header
+ * `MvrChip`, the body `MvrPanel`, and every `TypeLink` for the same package all
+ * share a single request (no `signal` — a shared cached promise isn't per-caller
+ * abortable; failures cache as `null`).
  */
 export async function mvrNameForPackage(
   network: Network,
   packageId: string,
   knownName?: string | null,
-  signal?: AbortSignal,
 ): Promise<string | null> {
   if (!mvrSupported(network)) return null
   if (knownName) return mvrBaseName(knownName)
-  return reverseResolveMvr(network, packageId, signal)
+  return mvrNameForPackageCached(network, packageId)
 }
 
 /**
@@ -385,7 +389,7 @@ export async function fetchMvrForPackage(
 ): Promise<MvrPackageInfo | null> {
   if (!mvrSupported(network)) return null
 
-  const name = await mvrNameForPackage(network, packageId, knownName, signal)
+  const name = await mvrNameForPackage(network, packageId, knownName)
   if (!name) return null
 
   const record = await fetchMvrName(network, name, signal)

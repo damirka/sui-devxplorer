@@ -14,6 +14,7 @@ import { fromBase64 } from '@mysten/sui/utils'
 import { gqlRequest } from './graphql'
 import { escapeRegExp } from './format'
 import { fetchObjectTypes } from './object'
+import { netGasUsed, type GasSummary } from './gas'
 import { mapBackwardPage, type Page, type PageArgs } from './pagination'
 import type { MoveFunctionSignature } from './move'
 import type { Network } from '@/context/network-context'
@@ -152,13 +153,6 @@ export type TxCommand =
       currentPackage: string
       upgradeTicket: TxArgument
     }
-
-export interface GasSummary {
-  computationCost: string | null
-  storageCost: string | null
-  storageRebate: string | null
-  nonRefundableStorageFee: string | null
-}
 
 export interface ObjectChangeNode {
   address: string
@@ -953,20 +947,6 @@ export function failedInstructionOffset(
   return m ? Number(m[1]) : null
 }
 
-/** Net gas used = computation + storage − rebate (in MIST). `null` if unknown. */
-export function netGasUsed(summary: GasSummary | null | undefined): bigint | null {
-  if (!summary) return null
-  const c = summary.computationCost
-  const s = summary.storageCost
-  const r = summary.storageRebate
-  if (c == null || s == null || r == null) return null
-  try {
-    return BigInt(c) + BigInt(s) - BigInt(r)
-  } catch {
-    return null
-  }
-}
-
 /* ── transaction lists (by sender / affected object / affected address) ── */
 
 // Paginated from the *end* (`last`/`before`) so the newest transactions come
@@ -982,7 +962,11 @@ query TxList($filter: TransactionFilter, $last: Int, $before: String) {
       digest
       kind { __typename }
       sender { address }
-      effects { status timestamp }
+      effects {
+        status
+        timestamp
+        gasEffects { gasSummary { computationCost storageCost storageRebate } }
+      }
     }
   }
 }
@@ -1002,6 +986,8 @@ export interface TxListItem {
   sender: string | null
   status: string | null
   timestamp: string | null
+  /** Net gas used (computation + storage − rebate, in MIST); null if unknown. */
+  gas: bigint | null
 }
 
 interface TxListResult {
@@ -1011,7 +997,11 @@ interface TxListResult {
       digest: string
       kind: { __typename: string } | null
       sender: { address: string } | null
-      effects: { status: string | null; timestamp: string | null } | null
+      effects: {
+        status: string | null
+        timestamp: string | null
+        gasEffects: { gasSummary: GasSummary | null } | null
+      } | null
     }[]
   }
 }
@@ -1044,6 +1034,7 @@ export async function fetchTransactions(
     sender: n.sender?.address ?? null,
     status: n.effects?.status ?? null,
     timestamp: n.effects?.timestamp ?? null,
+    gas: netGasUsed(n.effects?.gasEffects?.gasSummary),
   }))
 }
 

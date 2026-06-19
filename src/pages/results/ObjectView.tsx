@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Eye } from 'lucide-react'
+import { Diff, Eye } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { LinkedHash, TypeLink, useVersionHref } from '@/components/ui/links'
-import { JsonBlock } from '@/components/ui/JsonBlock'
+import { JsonTree } from '@/components/ui/JsonTree'
 import { CODE_PRE, DANGER_PRE } from '@/components/ui/codeBlock'
+import { cn } from '@/lib/cn'
 import { Muted } from '@/components/ui/Field'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -23,6 +24,7 @@ import { ObjectHistory } from './ObjectHistory'
 import { PackageBody } from './PackageBody'
 import { OwnedObjects } from './OwnedObjects'
 import { DynamicFields } from './DynamicFields'
+import { FieldsDiff } from './FieldsDiff'
 import { Txs } from './Txs'
 import { ObjectTransactions } from './ObjectTransactions'
 import { Badge } from '@/components/ui/Badge'
@@ -236,9 +238,15 @@ function MoveObjectBody({
     return () => document.removeEventListener('keydown', onKey)
   }, [olderVersion, newerVersion, navigate, versionHref])
 
+  // Toggle the Fields panel between the contents JSON and a unified diff of what
+  // the producing transaction changed.
+  const [showDiff, setShowDiff] = useState(false)
+
   const move = data.asMoveObject
   const display = move?.contents?.display
   const objectType = move?.contents?.type.repr ?? null
+  // The transaction that produced the version being viewed — drives the diff.
+  const prevTx = data.previousTransaction?.digest ?? null
   const signature = move?.contents?.type.signature ?? null
   // When this object is an `0x2::package::UpgradeCap`, decode its fields so a
   // dedicated section can show (and link to) the package it governs.
@@ -364,9 +372,34 @@ function MoveObjectBody({
 
       <div className={live ? 'grid grid-cols-1 gap-6 lg:grid-cols-2' : undefined}>
         <Panel>
-          <PanelSection label="Fields">
+          <PanelSection
+            label="Fields"
+            action={
+              move?.contents && prevTx ? (
+                <button
+                  type="button"
+                  onClick={() => setShowDiff((v) => !v)}
+                  aria-pressed={showDiff}
+                  title="what the producing transaction changed in this object"
+                  className={cn(
+                    'inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-xs transition-colors',
+                    showDiff
+                      ? 'border-primary text-primary'
+                      : 'border-line text-muted hover:text-primary',
+                  )}
+                >
+                  <Diff size={12} />
+                  {showDiff ? 'show fields' : 'show diff'}
+                </button>
+              ) : undefined
+            }
+          >
             {move?.contents ? (
-              <JsonBlock value={move.contents.json} copy />
+              showDiff && prevTx ? (
+                <FieldsDiff id={data.address} txDigest={prevTx} type={objectType} />
+              ) : (
+                <JsonTree value={move.contents.json} copy />
+              )
             ) : (
               <Muted>this object has no Move struct contents.</Muted>
             )}

@@ -10,6 +10,7 @@ import {
 import { ObjectOverview } from './ObjectOverview'
 import { PackageModules } from './PackageModules'
 import { StructDeclaration } from './moveType'
+import { TypeObjects } from './TypeObjects'
 import { OwnedObjects } from './OwnedObjects'
 import { Txs } from './Txs'
 import { MvrPanel } from './MvrPanel'
@@ -141,26 +142,36 @@ function TypeDefinitionPanel({
     [network, packageId, module, name],
   )
 
+  // Only a struct with the `key` ability can exist as a standalone object, so
+  // the "objects of this type" list is shown for those alone.
+  const isObject = !!data?.abilities.some((a) => a.toLowerCase() === 'key')
+
   return (
-    <Panel>
-      <PanelSection
-        label="Type definition"
-        action={
-          <span className="text-muted font-mono text-xs">
-            {module}::{name}
-          </span>
-        }
-      >
-        {loading ? (
-          <SkeletonLines count={3} />
-        ) : data ? (
-          <StructDeclaration def={data} />
-        ) : (
-          <span className="text-muted text-sm">
-            no struct named {name} in {module} — see the disassembly below.
-          </span>
-        )}
-      </PanelSection>
-    </Panel>
+    <>
+      <Panel>
+        <PanelSection
+          label="Type definition"
+          action={
+            <span className="text-muted font-mono text-xs">
+              {module}::{name}
+            </span>
+          }
+        >
+          {loading ? (
+            <SkeletonLines count={3} />
+          ) : data ? (
+            <StructDeclaration def={data} />
+          ) : (
+            <span className="text-muted text-sm">
+              no struct named {name} in {module} — see the disassembly below.
+            </span>
+          )}
+        </PanelSection>
+      </Panel>
+
+      {isObject && (
+        <TypeObjects packageId={packageId} module={module} name={name} />
+      )}
+    </>
   )
 }

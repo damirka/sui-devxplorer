@@ -6,6 +6,7 @@
  */
 import { gqlRequest } from './graphql'
 import { isUpgradeCapType, upgradeCapData } from './upgradeCap'
+import { netGasUsed, type GasSummary } from './gas'
 import {
   mapBackwardPage,
   mapPage,
@@ -73,6 +74,8 @@ export interface DynamicFieldNode {
     | {
         __typename: 'MoveObject'
         address: string
+        /** Version of the object held in this dynamic *object* field. */
+        version: number | null
         contents: { type: { repr: string } } | null
       }
 }
@@ -160,7 +163,11 @@ query ObjectVersions($address: SuiAddress!, $last: Int!, $before: String) {
       previousTransaction {
         digest
         sender { address }
-        effects { status timestamp }
+        effects {
+          status
+          timestamp
+          gasEffects { gasSummary { computationCost storageCost storageRebate } }
+        }
       }
     }
   }
@@ -176,6 +183,8 @@ export interface ObjectVersionNode {
   sender: string | null
   status: string | null
   timestamp: string | null
+  /** Net gas used by the producing tx (computation + storage − rebate, MIST). */
+  gas: bigint | null
   /** Who owned the object *at* this version — reveals ownership transfers over
    *  the history. Only meaningful (and shown) for address/object-owned objects. */
   owner: ObjectOwner | null
@@ -202,7 +211,11 @@ export async function fetchObjectVersions(
         previousTransaction: {
           digest: string
           sender: { address: string } | null
-          effects: { status: string | null; timestamp: string | null } | null
+          effects: {
+            status: string | null
+            timestamp: string | null
+            gasEffects: { gasSummary: GasSummary | null } | null
+          } | null
         } | null
       }[]
     }
@@ -219,8 +232,99 @@ export async function fetchObjectVersions(
     sender: n.previousTransaction?.sender?.address ?? null,
     status: n.previousTransaction?.effects?.status ?? null,
     timestamp: n.previousTransaction?.effects?.timestamp ?? null,
+    gas: netGasUsed(n.previousTransaction?.effects?.gasEffects?.gasSummary),
     owner: n.owner ?? null,
   }))
+}
+
+// How a single object participated in one transaction, via
+// `Address.asTransactionObject`. The `ObjectChange` variant carries the object's
+// contents immediately before and after the tx (so the caller can diff them);
+// `ConsensusObjectRead` means it was only read as an unchanged shared input.
+const OBJECT_IN_TX_QUERY = `
+query ObjectInTx($address: SuiAddress!, $digest: String!) {
+  address(address: $address) {
+    asTransactionObject(transactionDigest: $digest) {
+      __typename
+      ... on ObjectChange {
+        idCreated
+        idDeleted
+        inputState { version asMoveObject { contents { json } } }
+        outputState { version asMoveObject { contents { json } } }
+      }
+      ... on ConsensusObjectRead {
+        object { version }
+      }
+    }
+  }
+}
+`
+
+export interface ObjectTxChange {
+  /** `change` = mutated/created/deleted; `read` = unchanged shared input. */
+  kind: 'change' | 'read'
+  idCreated: boolean
+  idDeleted: boolean
+  /** Flattened contents before the tx (`null` when created, or on a read). */
+  before: unknown | null
+  /** Flattened contents after the tx (`null` when deleted, or on a read). */
+  after: unknown | null
+  beforeVersion: number | null
+  afterVersion: number | null
+}
+
+/**
+ * How a single transaction touched this object — its contents immediately before
+ * and after (for a diff), or a `read` when the object was only read as an
+ * unchanged shared input. `null` when the tx didn't reference the object.
+ */
+export async function fetchObjectChangeInTx(
+  network: Network,
+  objectId: string,
+  txDigest: string,
+  signal?: AbortSignal,
+): Promise<ObjectTxChange | null> {
+  type ObjState = {
+    version: number | null
+    asMoveObject: { contents: { json: unknown } | null } | null
+  } | null
+  const { data } = await gqlRequest<{
+    address: {
+      asTransactionObject:
+        | {
+            __typename: 'ObjectChange'
+            idCreated: boolean | null
+            idDeleted: boolean | null
+            inputState: ObjState
+            outputState: ObjState
+          }
+        | { __typename: 'ConsensusObjectRead'; object: { version: number | null } | null }
+        | null
+    } | null
+  }>(network, OBJECT_IN_TX_QUERY, { address: objectId, digest: txDigest }, signal)
+
+  const o = data.address?.asTransactionObject
+  if (!o) return null
+  if (o.__typename === 'ConsensusObjectRead') {
+    return {
+      kind: 'read',
+      idCreated: false,
+      idDeleted: false,
+      before: null,
+      after: null,
+      beforeVersion: null,
+      afterVersion: o.object?.version ?? null,
+    }
+  }
+  return {
+    kind: 'change',
+    idCreated: !!o.idCreated,
+    idDeleted: !!o.idDeleted,
+    before: o.inputState?.asMoveObject?.contents?.json ?? null,
+    after: o.outputState?.asMoveObject?.contents?.json ?? null,
+    beforeVersion: o.inputState?.version ?? null,
+    afterVersion: o.outputState?.version ?? null,
+  }
 }
 
 // A package's `linkage` is the authoritative dependency list: every package it
@@ -271,7 +375,7 @@ query DynamicFields($address: SuiAddress!, $first: Int, $after: String) {
         value {
           __typename
           ... on MoveValue { type { repr } json }
-          ... on MoveObject { address contents { type { repr } } }
+          ... on MoveObject { address version contents { type { repr } } }
         }
       }
     }
@@ -424,6 +528,132 @@ export async function fetchStructByPath(
     } | null
   }>(network, TYPE_DEF_QUERY, { package: packageId, module, name }, signal)
   return data.object?.asMovePackage?.module?.struct ?? null
+}
+
+// A package's `typeOrigins` maps each struct → the package id where it was first
+// defined (`definingId`). The top-level `objects` type-filter ONLY matches that
+// defining id — filtering by a later *upgraded* package id returns nothing — so a
+// type reached via an upgraded id must be resolved back to its defining id first.
+const TYPE_ORIGINS_QUERY = `
+query TypeOrigins($address: SuiAddress!) {
+  object(address: $address) {
+    asMovePackage {
+      typeOrigins { module struct definingId }
+    }
+  }
+}
+`
+
+/**
+ * Resolve the *defining* package id of a struct (the id its objects' type repr
+ * carries, and the only one the `objects` type-filter matches). Looks the struct
+ * up in the package's `typeOrigins`; available from any version of the package.
+ * `null` when the struct isn't found there (caller falls back to the queried id,
+ * which is usually already the defining id).
+ */
+export async function fetchTypeDefiningId(
+  network: Network,
+  packageId: string,
+  module: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const { data } = await gqlRequest<{
+    object: {
+      asMovePackage: {
+        typeOrigins: { module: string; struct: string; definingId: string }[]
+      } | null
+    } | null
+  }>(network, TYPE_ORIGINS_QUERY, { address: packageId }, signal)
+  const origins = data.object?.asMovePackage?.typeOrigins ?? []
+  return (
+    origins.find((o) => o.module === module && o.struct === name)?.definingId ??
+    null
+  )
+}
+
+// Every object of a Move type, network-wide — the top-level `objects` connection
+// filtered by type (NOT scoped to an owner like `fetchOwnedPage`). Its nodes are
+// `Object` (not `MoveObject`), so contents go through `asMoveObject`. A *base*
+// type with no type args (`pkg::mod::Pool`) matches all type-arg combos
+// (`Pool<A,B>`, `Pool<C,D>`, …) — the concrete repr per node tells them apart.
+const OBJECTS_BY_TYPE_QUERY = `
+query ObjectsByType($type: String!, $first: Int, $after: String) {
+  objects(first: $first, after: $after, filter: { type: $type }) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      address
+      owner {
+        __typename
+        ... on AddressOwner { owner: address { address } }
+        ... on ObjectOwner { owner: address { address } }
+        ... on ConsensusAddressOwner { startVersion owner: address { address } }
+        ... on Shared { initialSharedVersion }
+      }
+      asMoveObject {
+        contents {
+          type { repr }
+          display { output }
+        }
+      }
+    }
+  }
+}
+`
+
+export interface TypeObject {
+  address: string
+  /** The object's concrete type repr — carries the generic args for a base-type
+   *  filter (so `Pool<A,B>` instances are distinguishable). */
+  type: string | null
+  /** Rendered Display `name` / `description`, when the object has a Display. */
+  name: string | null
+  description: string | null
+  owner: ObjectOwner | null
+}
+
+/**
+ * One page of the objects of a given Move type, network-wide. Pass the *defining*
+ * type (`fetchTypeDefiningId`-resolved) — an upgraded-id filter matches nothing.
+ * `limit` is capped at 50 by the service. Empty page when the type has no live
+ * objects (e.g. it isn't a `key` struct, or none exist).
+ */
+export async function fetchObjectsByType(
+  network: Network,
+  type: string,
+  args: PageArgs,
+  signal?: AbortSignal,
+): Promise<Page<TypeObject>> {
+  const { data } = await gqlRequest<{
+    objects: {
+      pageInfo: { hasNextPage: boolean; endCursor: string | null }
+      nodes: {
+        address: string
+        owner: ObjectOwner | null
+        asMoveObject: {
+          contents: {
+            type: { repr: string }
+            display: { output: unknown } | null
+          } | null
+        } | null
+      }[]
+    }
+  }>(
+    network,
+    OBJECTS_BY_TYPE_QUERY,
+    { type, first: args.limit, after: args.cursor ?? null },
+    signal,
+  )
+  return mapPage(data.objects, (n) => {
+    const output = n.asMoveObject?.contents?.display?.output ?? null
+    return {
+      address: n.address,
+      type: n.asMoveObject?.contents?.type.repr ?? null,
+      name: displayField(output, 'name'),
+      description: displayField(output, 'description'),
+      owner: n.owner ?? null,
+    }
+  })
 }
 
 const FUNCTION_DEF_QUERY = `

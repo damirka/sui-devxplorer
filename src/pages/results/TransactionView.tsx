@@ -31,12 +31,13 @@ import {
 } from '@/lib/format'
 import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
+import { netGasUsed } from '@/lib/gas'
 import { reverseResolveMvrBulk, mvrAppUrl } from '@/lib/mvr'
+import { ObjectChangeDiff } from './ObjectChangeDiff'
 import {
   fetchTransaction,
   fetchFunctionDisassembly,
   usedResults,
-  netGasUsed,
   failedCommandIndex,
   failedInstructionOffset,
   inputType,
@@ -318,7 +319,7 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
 
       {fx && (
         <Panel>
-          <ObjectChanges fx={fx} />
+          <ObjectChanges fx={fx} txDigest={tx.digest} />
           <BalanceChanges fx={fx} />
           <Events fx={fx} />
         </Panel>
@@ -1109,7 +1110,13 @@ function isDynamicFieldChange(n: ObjectChangeNode): boolean {
   return t != null && DF_TYPE_RE.test(t)
 }
 
-function ObjectChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) {
+function ObjectChanges({
+  fx,
+  txDigest,
+}: {
+  fx: NonNullable<SuiTransaction['effects']>
+  txDigest: string | null
+}) {
   const { network } = useNetwork()
   const nodes = fx.objectChanges.nodes
 
@@ -1164,6 +1171,7 @@ function ObjectChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) {
           <ObjectChangeList
             nodes={showDf ? dfNodes : objNodes}
             mvrNames={mvrNames}
+            txDigest={txDigest}
             empty={showDf ? 'no dynamic field changes.' : 'no object changes.'}
           />
         </>
@@ -1176,10 +1184,12 @@ function ObjectChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) {
 function ObjectChangeList({
   nodes,
   mvrNames,
+  txDigest,
   empty,
 }: {
   nodes: ObjectChangeNode[]
   mvrNames: Record<string, string>
+  txDigest: string | null
   empty: string
 }) {
   if (nodes.length === 0) return <Muted>{empty}</Muted>
@@ -1189,7 +1199,14 @@ function ObjectChangeList({
   return (
     <div className="space-y-4">
       <ObjectChangeGroup label="created" nodes={created} mvrNames={mvrNames} />
-      <ObjectChangeGroup label="mutated" nodes={mutated} mvrNames={mvrNames} />
+      {/* Only mutated objects can be diffed (before ≠ after); created/deleted
+          don't get the expander. */}
+      <ObjectChangeGroup
+        label="mutated"
+        nodes={mutated}
+        mvrNames={mvrNames}
+        txDigest={txDigest}
+      />
       <ObjectChangeGroup label="deleted" nodes={deleted} mvrNames={mvrNames} />
     </div>
   )
@@ -1199,10 +1216,13 @@ function ObjectChangeGroup({
   label,
   nodes,
   mvrNames,
+  txDigest,
 }: {
   label: string
   nodes: ObjectChangeNode[]
   mvrNames: Record<string, string>
+  /** When set (the mutated group), each non-package row can expand to a diff. */
+  txDigest?: string | null
 }) {
   if (nodes.length === 0) return null
   return (
@@ -1211,42 +1231,82 @@ function ObjectChangeGroup({
         {label} · {nodes.length}
       </span>
       <ul className="divide-line mt-1.5 divide-y font-mono text-xs">
-        {nodes.map((n) => {
-          // A created/mutated package has no `asMoveObject` — surface its type as
-          // "package" (with its MVR name when one is registered) instead of blank.
-          const isPackage = !!n.outputState?.asMovePackage
-          const type = changeType(n)
-          const name = mvrNames[n.address]
-          return (
-            <li key={n.address} className="flex flex-col gap-1 py-2 sm:flex-row sm:items-center sm:gap-3">
-              <LinkedHash value={n.address} />
-              {isPackage ? (
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="text-primary">package</span>
-                  {name && (
-                    <a
-                      href={mvrAppUrl(name)}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      title={`${name} · view on Move Registry`}
-                      className="text-muted hover:text-primary truncate transition-colors"
-                    >
-                      {name}
-                    </a>
-                  )}
-                </span>
-              ) : (
-                type && (
-                  <span className="text-muted min-w-0">
-                    <TypeLink type={type} />
-                  </span>
-                )
-              )}
-            </li>
-          )
-        })}
+        {nodes.map((n) => (
+          <ObjectChangeItem
+            key={n.address}
+            node={n}
+            mvrName={mvrNames[n.address]}
+            txDigest={txDigest ?? null}
+          />
+        ))}
       </ul>
     </div>
+  )
+}
+
+/** One object-change row. When `txDigest` is set and the change isn't a package,
+ *  it expands to show what the transaction changed in that object's contents. */
+function ObjectChangeItem({
+  node,
+  mvrName,
+  txDigest,
+}: {
+  node: ObjectChangeNode
+  mvrName?: string
+  txDigest: string | null
+}) {
+  const [open, setOpen] = useState(false)
+  // A created/mutated package has no `asMoveObject` — surface its type as
+  // "package" (with its MVR name when one is registered) instead of blank.
+  const isPackage = !!node.outputState?.asMovePackage
+  const type = changeType(node)
+  const diffable = !!txDigest && !isPackage
+
+  return (
+    <li className="py-2">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+        <LinkedHash value={node.address} />
+        {isPackage ? (
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="text-primary">package</span>
+            {mvrName && (
+              <a
+                href={mvrAppUrl(mvrName)}
+                target="_blank"
+                rel="noreferrer noopener"
+                title={`${mvrName} · view on Move Registry`}
+                className="text-muted hover:text-primary truncate transition-colors"
+              >
+                {mvrName}
+              </a>
+            )}
+          </span>
+        ) : (
+          type && (
+            <span className="text-muted min-w-0">
+              <TypeLink type={type} />
+            </span>
+          )
+        )}
+        {diffable && (
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            title="what this transaction changed in this object"
+            className="text-muted hover:text-primary ml-auto inline-flex shrink-0 items-center gap-1 font-mono text-[0.6875rem] transition-colors"
+          >
+            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {open ? 'hide changes' : 'show changes'}
+          </button>
+        )}
+      </div>
+      {open && txDigest && (
+        <div className="mt-2">
+          <ObjectChangeDiff id={node.address} txDigest={txDigest} type={type} />
+        </div>
+      )}
+    </li>
   )
 }
 

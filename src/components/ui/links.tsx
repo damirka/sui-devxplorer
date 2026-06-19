@@ -29,14 +29,16 @@ function useMvrName(packageId: string | null): string | null {
 }
 
 /** Build a `?search=` href for the current location, preserving other params.
- * Drops `version` — a pinned object version belongs to the id being left, not
- * the new entity being navigated to. */
+ * Drops `version` by default — a pinned object version belongs to the id being
+ * left, not the new entity. Pass a `version` to pin the target to it instead
+ * (e.g. opening a dynamic object field's value at the version it holds). */
 export function useSearchHref() {
   const [params] = useSearchParams()
-  return (value: string) => {
+  return (value: string, version?: number | null) => {
     const next = new URLSearchParams(params)
     next.set('search', value)
-    next.delete('version')
+    if (version != null) next.set('version', String(version))
+    else next.delete('version')
     return `?${next.toString()}`
   }
 }

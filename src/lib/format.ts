@@ -116,7 +116,9 @@ export function formatTimestamp(iso: string | null | undefined): string {
   return d.toLocaleString('en-US', {
     year: 'numeric',
     month: 'short',
-    day: 'numeric',
+    // 2-digit day so the string is a constant width (the month abbrev is always
+    // 3 chars) — keeps timestamp columns aligned row-to-row in the tx lists.
+    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',

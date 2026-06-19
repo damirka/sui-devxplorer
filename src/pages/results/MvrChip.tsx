@@ -21,7 +21,7 @@ export function MvrChip({
 }) {
   const { network } = useNetwork()
   const { data: name } = useAsync(
-    (signal) => mvrNameForPackage(network, packageId, knownName, signal),
+    () => mvrNameForPackage(network, packageId, knownName),
     [network, packageId, knownName],
   )
 
