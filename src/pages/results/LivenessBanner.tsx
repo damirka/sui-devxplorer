@@ -2,14 +2,12 @@ import type { ReactNode } from 'react'
 import { Pause } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { INTERVAL_WARN_MS, type CheckpointTip, type Liveness } from '@/lib/checkpoint'
-import { formatAge } from '@/lib/format'
+import { formatAge, formatCount } from '@/lib/format'
 import { cn } from '@/lib/cn'
 
 const STATUS_META: Record<Liveness, { label: string; cls: string; pulse: boolean }> = {
-  // Green when healthy, red whenever production is off — the app's dry two-hue
-  // palette (green signal / red alarm), no third colour. The label and the live
-  // numeric age convey *how far* off; both off tiers share the alarm hue so a
-  // glance is enough. The healthy state pulses like a heartbeat.
+  // Green = healthy, red = off (the app's two-hue palette). Label + live age say
+  // how far off; the healthy state pulses like a heartbeat.
   live: { label: 'LIVE', cls: 'text-secondary', pulse: true },
   lagging: { label: 'LAGGING', cls: 'text-danger', pulse: false },
   stalled: { label: 'STALLED', cls: 'text-danger', pulse: false },
@@ -26,6 +24,8 @@ export function LivenessBanner({
   lag,
   status,
   interval,
+  txPerSec,
+  protocolVersion,
   frozen,
 }: {
   /** The chain tip, or `null` until the first poll resolves. */
@@ -35,11 +35,23 @@ export function LivenessBanner({
   status: Liveness
   /** Mean inter-checkpoint interval over the window (ms); `null` if unknown. */
   interval: number | null
+  /** Programmable (non-system) transactions per second; `null` until measured. */
+  txPerSec: number | null
+  /** The network's current protocol version; `null` until resolved. */
+  protocolVersion: number | null
   /** Whether the feed below is paused for inspection (the verdict stays live). */
   frozen: boolean
 }) {
   const meta = STATUS_META[status]
   const intervalOff = interval != null && interval >= INTERVAL_WARN_MS
+  const tpsTitle =
+    txPerSec == null
+      ? undefined
+      : `${Math.round(txPerSec).toLocaleString()} programmable tx/s (system txs excluded)`
+  const tpmTitle =
+    txPerSec == null
+      ? undefined
+      : `${Math.round(txPerSec * 60).toLocaleString()} programmable tx/min (system txs excluded)`
   return (
     <div className="border-line bg-surface flex flex-col gap-3 border p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
@@ -60,39 +72,43 @@ export function LivenessBanner({
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 font-mono text-xs">
-        <Stat label="tip">
-          <span className="text-primary tabular-nums">
-            #{head ? head.sequenceNumber.toLocaleString() : '—'}
-          </span>
-        </Stat>
-        <Stat label="age">
-          <span className={cn('tabular-nums', meta.cls)}>{lag == null ? '—' : formatAge(lag)}</span>
-        </Stat>
-        <Stat label="cadence">
-          <span
-            className={cn('tabular-nums', intervalOff && 'text-danger')}
-            title="average interval between checkpoints"
-          >
-            {interval == null ? '—' : `${Math.round(interval)}ms`}
-          </span>
-        </Stat>
-        <Stat label="signers">
-          <span className="tabular-nums">{head?.signers ?? '—'}</span>
-        </Stat>
-        <Stat label="epoch">
-          <span className="tabular-nums">{head?.epochId ?? '—'}</span>
-        </Stat>
+        <Stat label="tip" tone="text-primary" value={head ? `#${head.sequenceNumber.toLocaleString()}` : '—'} />
+        <Stat label="age" tone={meta.cls} value={lag == null ? '—' : formatAge(lag)} />
+        <Stat
+          label="cadence"
+          tone={intervalOff ? 'text-danger' : undefined}
+          title="average interval between checkpoints"
+          value={interval == null ? '—' : `${Math.round(interval)}ms`}
+        />
+        <Stat label="tx/s" title={tpsTitle} value={txPerSec == null ? '—' : formatCount(Math.round(txPerSec))} />
+        <Stat label="tx/min" title={tpmTitle} value={txPerSec == null ? '—' : formatCount(Math.round(txPerSec * 60))} />
+        <Stat label="signers" value={head?.signers ?? '—'} />
+        <Stat label="epoch" value={head?.epochId ?? '—'} />
+        <Stat label="protocol" title="current protocol version" value={protocolVersion ?? '—'} />
       </div>
     </div>
   )
 }
 
-/** A small `LABEL value` pair in the banner's stat strip. */
-function Stat({ label, children }: { label: string; children: ReactNode }) {
+/** A `LABEL value` pair in the banner's stat strip. Values are tabular; `tone`
+ *  colours the value (the verdict hue, or red for a warning). */
+function Stat({
+  label,
+  value,
+  tone,
+  title,
+}: {
+  label: string
+  value: ReactNode
+  tone?: string
+  title?: string
+}) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className="text-muted tracking-wider uppercase">{label}</span>
-      <span className="text-text">{children}</span>
+      <span className={cn('tabular-nums', tone ?? 'text-text')} title={title}>
+        {value}
+      </span>
     </span>
   )
 }

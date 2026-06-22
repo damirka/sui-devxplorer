@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { AtSign, Coins, Images, KeyRound, Loader2, Stamp, X } from 'lucide-react'
+import { AtSign, Coins, Images, KeyRound, Loader2, Package, Stamp, X } from 'lucide-react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Pager, usePagedList } from '@/components/ui/Pager'
 import { DataList } from '@/components/ui/DataList'
@@ -74,6 +74,14 @@ const SUINS_REGISTRATION_MVR =
  * per-network / upgraded package id still counts. */
 function isSuinsType(repr: string | null | undefined): boolean {
   return !!repr && /::suins_registration::SuinsRegistration$/.test(repr)
+}
+
+/** The Move Registry app-registration capability (`app_record::AppCap`): owning
+ * one means you control a registered MVR app/package name. Matched by
+ * `module::struct` so the (defining) package id counts on any network — on
+ * mainnet that's `0x62c1f5b1…::app_record::AppCap`. */
+function isMvrAppType(repr: string | null | undefined): boolean {
+  return !!repr && /::app_record::AppCap$/.test(repr)
 }
 
 /** The `0x2::package::Publisher` framework type (same id on every network). */
@@ -818,6 +826,12 @@ function TypesOwned({
   const publisherCount = types
     .filter((t) => isPublisherType(t.type))
     .reduce((sum, t) => sum + t.count, 0)
+  // MVR packages are AppCap objects — one per registered Move Registry app name.
+  // A single concrete type, so (like suins names) the filter just selects it; use
+  // the scan-seen repr so it's the network-correct defining id, no hardcoding.
+  const mvrTypes = types.filter((t) => isMvrAppType(t.type))
+  const mvrCount = mvrTypes.reduce((sum, t) => sum + t.count, 0)
+  const mvrFilterType = mvrTypes[0]?.type ?? null
   // The pre-built filters are shortcuts only — their types stay in the full list
   // too, since dropping them empties it for a coin-/cap-/suins-heavy owner.
   const shown = q
@@ -846,6 +860,7 @@ function TypesOwned({
             {/* Pre-built quick filters — one-click shortcuts to common holdings. */}
             {(coins.length > 0 ||
               suinsCount > 0 ||
+              mvrCount > 0 ||
               publisherCount > 0 ||
               displays.length > 0 ||
               caps.length > 0) && (
@@ -868,6 +883,16 @@ function TypesOwned({
                     active={filter?.kind === 'type' && isSuinsType(filter.type)}
                     onClick={() => onSelectType(suinsFilterType)}
                     title="all SuiNS name registrations owned here"
+                  />
+                )}
+                {mvrCount > 0 && mvrFilterType && (
+                  <QuickFilter
+                    icon={<Package size={13} />}
+                    label="mvr packages"
+                    count={mvrCount}
+                    active={filter?.kind === 'type' && isMvrAppType(filter.type)}
+                    onClick={() => onSelectType(mvrFilterType)}
+                    title="all Move Registry app registrations (AppCap) owned here"
                   />
                 )}
                 {publisherCount > 0 && (

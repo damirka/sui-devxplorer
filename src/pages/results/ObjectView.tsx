@@ -7,6 +7,7 @@ import { JsonTree } from '@/components/ui/JsonTree'
 import { CODE_PRE, DANGER_PRE } from '@/components/ui/codeBlock'
 import { cn } from '@/lib/cn'
 import { Muted } from '@/components/ui/Field'
+import { ExpandableText } from '@/components/ui/ExpandableText'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useNetwork } from '@/context/useNetwork'
@@ -487,7 +488,7 @@ function MoveObjectBody({
                       <span className="text-primary sm:w-36 sm:shrink-0">
                         {f.key}
                       </span>
-                      <span className="text-muted break-all">{f.value}</span>
+                      <ExpandableText text={f.value} className="text-muted min-w-0" />
                     </li>
                   ))}
                 </ul>

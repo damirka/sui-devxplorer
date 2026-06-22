@@ -4,11 +4,13 @@ import { Panel, PanelSection } from '@/components/ui/Panel'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { useNetwork } from '@/context/useNetwork'
-import { usePolledAsync } from '@/lib/useAsync'
+import { useAsync, usePolledAsync } from '@/lib/useAsync'
 import { useNow } from '@/lib/useNow'
+import { fetchChainStatus } from '@/lib/chain'
 import {
   fetchRecentCheckpoints,
   fetchLatestCheckpoint,
+  fetchThroughput,
   livenessForLag,
   tipLagMs,
   avgCheckpointIntervalMs,
@@ -46,6 +48,13 @@ export function CheckpointsView() {
     [network],
     POLL_MS,
   )
+  // Programmable-tx throughput — its own always-live poll (never frozen), so the
+  // tx/s · tx/min readout keeps ticking even while the feed is held for inspection.
+  const throughput = usePolledAsync(
+    (signal) => fetchThroughput(network, signal),
+    [network],
+    POLL_MS,
+  )
   // The inspectable feed — paused (pollMs → null) whenever a row is open. Toggling
   // pollMs only re-arms the poll interval; the primary load keys on `[network]`,
   // so the frozen rows are preserved, not refetched.
@@ -57,6 +66,10 @@ export function CheckpointsView() {
   // A 1s clock so the tip "age" / verdict keep advancing between 2s polls — and
   // keep climbing if a poll fails (a frozen tip then surfaces as stale, not green).
   const now = useNow(1000)
+
+  // Protocol version — fetched once per network (changes only at an upgrade).
+  // (Epoch in the banner comes live from the tip poll below.)
+  const chain = useAsync((signal) => fetchChainStatus(network, signal), [network])
 
   if (feed.loading && !feed.data) {
     return (
@@ -98,7 +111,15 @@ export function CheckpointsView() {
 
   return (
     <div className="space-y-6">
-      <LivenessBanner head={head} lag={lag} status={status} interval={interval} frozen={frozen} />
+      <LivenessBanner
+        head={head}
+        lag={lag}
+        status={status}
+        interval={interval}
+        txPerSec={throughput.data ?? null}
+        protocolVersion={chain.data?.protocolVersion ?? null}
+        frozen={frozen}
+      />
       <Panel>
         <PanelSection
           label="Recent checkpoints"

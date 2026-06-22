@@ -18,6 +18,7 @@ export interface CoinMeta {
 }
 
 // SUI's on-chain `CoinMetadata.iconUrl` is empty, so we supply the official one.
+// This is the ONLY hardcoded icon — every other coin uses its on-chain metadata.
 const SUI_TYPE_RE = /^0x0*2::sui::SUI$/
 const SUI_ICON_URL =
   'https://strapi-space-bucket-fra1-1.fra1.cdn.digitaloceanspaces.com/sui_c07df05f00.png'
@@ -60,9 +61,7 @@ export async function fetchCoinMetadata(
       out.set(t, {
         decimals: m.decimals,
         symbol: m.symbol ?? '',
-        iconUrl: SUI_TYPE_RE.test(t)
-          ? SUI_ICON_URL
-          : m.iconUrl?.trim() || undefined,
+        iconUrl: SUI_TYPE_RE.test(t) ? SUI_ICON_URL : m.iconUrl?.trim() || undefined,
       })
     }
   })

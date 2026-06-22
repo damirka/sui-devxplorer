@@ -1,14 +1,8 @@
 /**
- * Checkpoint fetching + network-liveness signals.
- *
- * Checkpoints are the chain's heartbeat: Sui seals one every fraction of a second
- * (observed ~0.2–0.3s on mainnet; testnet/devnet are likewise sub-second). The
- * "Checkpoints" view polls the most recent ones to judge whether the network is
- * still producing — and how fast. A checkpoint carries no per-checkpoint tx count
- * or gas figure, only running totals (`networkTotalTransactions` and the
- * epoch-rolling gas summary), so we derive the per-checkpoint deltas by diffing
- * each checkpoint against its older neighbour — which is why we over-fetch one
- * extra checkpoint to anchor the oldest displayed row.
+ * Checkpoint fetching + network-liveness signals. A checkpoint exposes no
+ * per-checkpoint tx count or gas figure — only running totals — so those deltas
+ * are derived by diffing each checkpoint against its older neighbour (hence the
+ * one extra checkpoint fetched, to anchor the oldest displayed row).
  */
 import { gqlRequest } from './graphql'
 import { netGasUsed, type GasSummary } from './gas'
@@ -171,6 +165,70 @@ export async function fetchLatestCheckpoint(
   }
 }
 
+// Sampled in one request, each checkpoint's SYSTEM_TX count read inline. Sui caps a
+// request at 21 "dedicated store" sub-queries (1 + one `transactions` per node), so
+// the window stays ≤ 20 (18 for margin). `SYSTEM_TX` includes
+// `ProgrammableSystemTransaction` (the PROGRAMMABLE_TX bucket is user PTBs only); at
+// a fixed ~7/checkpoint (max ~11), `first: 50` never truncates, so the count is exact.
+const THROUGHPUT_WINDOW = 18
+const SYSTEM_TX_CAP = 50
+
+const THROUGHPUT_QUERY = `
+query Throughput($last: Int!, $sysFirst: Int!) {
+  checkpoints(last: $last) {
+    nodes {
+      networkTotalTransactions
+      timestamp
+      systemTx: transactions(first: $sysFirst, filter: { kind: SYSTEM_TX }) {
+        nodes { digest }
+      }
+    }
+  }
+}
+`
+
+/**
+ * Programmable transactions per second over the most recent window of checkpoints,
+ * or `null` if the window is too small to measure. `networkTotalTransactions` counts
+ * *every* tx, so each checkpoint's `SYSTEM_TX` count (consensus prologue, state
+ * updates, system PTBs — all bucket as SYSTEM_TX) is read inline and subtracted off,
+ * leaving programmable txs only. Polled independently of the feed so it keeps
+ * updating while the feed is frozen.
+ */
+export async function fetchThroughput(
+  network: Network,
+  signal?: AbortSignal,
+): Promise<number | null> {
+  const { data } = await gqlRequest<{
+    checkpoints: {
+      nodes: {
+        networkTotalTransactions: string | number
+        timestamp: string | null
+        systemTx: { nodes: { digest: string }[] }
+      }[]
+    }
+  }>(network, THROUGHPUT_QUERY, { last: THROUGHPUT_WINDOW, sysFirst: SYSTEM_TX_CAP }, signal)
+
+  const nodes = data.checkpoints.nodes // ascending (oldest → newest)
+  if (nodes.length < 2) return null
+  const oldest = nodes[0]
+  const newest = nodes[nodes.length - 1]
+  const spanMs =
+    (newest.timestamp ? new Date(newest.timestamp).getTime() : NaN) -
+    (oldest.timestamp ? new Date(oldest.timestamp).getTime() : NaN)
+  if (!(spanMs > 0)) return null
+
+  // `totalDelta` is the txs sealed after `oldest` (its cumulative count is the
+  // baseline) — i.e. in checkpoints oldest+1 … newest. Subtract the SYSTEM_TX in
+  // those same checkpoints (nodes[1…]), so the remainder is programmable only.
+  const totalDelta =
+    Number(newest.networkTotalTransactions) - Number(oldest.networkTotalTransactions)
+  let systemDelta = 0
+  for (let i = 1; i < nodes.length; i++) systemDelta += nodes[i].systemTx.nodes.length
+  const programmable = Math.max(0, totalDelta - systemDelta)
+  return programmable / (spanMs / 1000)
+}
+
 /* ─────────────────────────── liveness signals ──────────────────────────── */
 
 export type Liveness = 'live' | 'lagging' | 'stalled'
@@ -183,12 +241,9 @@ export type Liveness = 'live' | 'lagging' | 'stalled'
 export const TIP_LAGGING_MS = 5_000
 export const TIP_STALLED_MS = 15_000
 
-// Healthy production interval baseline (ms/checkpoint) for the cadence readout.
-// Every current Sui network seals well under a second; a multi-second *average*
-// over the window means production itself has slowed — a clock-independent signal
-// that complements tip freshness (and catches a stall even when the client clock
-// is skewed).
-export const HEALTHY_INTERVAL_MS = 300
+// Cadence warning threshold (ms/checkpoint): every current Sui network seals well
+// under a second, so a multi-second average over the window means production has
+// slowed — a clock-independent signal that complements tip freshness.
 export const INTERVAL_WARN_MS = 2_000
 
 /** Liveness tier from how stale the chain tip is (ms behind wall-clock). */
