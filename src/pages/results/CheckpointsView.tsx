@@ -4,7 +4,7 @@ import { Panel, PanelSection } from '@/components/ui/Panel'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { useNetwork } from '@/context/useNetwork'
-import { useAsync, usePolledAsync } from '@/lib/useAsync'
+import { usePolledAsync } from '@/lib/useAsync'
 import { useNow } from '@/lib/useNow'
 import { fetchChainStatus } from '@/lib/chain'
 import {
@@ -13,7 +13,6 @@ import {
   fetchThroughput,
   livenessForLag,
   tipLagMs,
-  avgCheckpointIntervalMs,
   type CheckpointTip,
   type Liveness,
 } from '@/lib/checkpoint'
@@ -67,9 +66,14 @@ export function CheckpointsView() {
   // keep climbing if a poll fails (a frozen tip then surfaces as stale, not green).
   const now = useNow(1000)
 
-  // Protocol version — fetched once per network (changes only at an upgrade).
-  // (Epoch in the banner comes live from the tip poll below.)
-  const chain = useAsync((signal) => fetchChainStatus(network, signal), [network])
+  // Protocol version + estimated next-epoch boundary. Polled slowly (these change
+  // ~daily at most) so the estimate re-anchors after an epoch rollover; the epoch
+  // number in the banner comes live from the tip poll above.
+  const chain = usePolledAsync(
+    (signal) => fetchChainStatus(network, signal),
+    [network],
+    60_000,
+  )
 
   if (feed.loading && !feed.data) {
     return (
@@ -107,7 +111,9 @@ export function CheckpointsView() {
   const lag = head ? tipLagMs(head.timestamp, now) : null
   // A tip we can't date is treated as stalled — we have no evidence it's live.
   const status: Liveness = lag == null ? 'stalled' : livenessForLag(lag)
-  const interval = avgCheckpointIntervalMs(feed.data)
+  // Time left until the scheduled next-epoch boundary (counts down via `now`).
+  const nextEpochInMs =
+    chain.data?.nextEpochMs != null ? chain.data.nextEpochMs - now : null
 
   return (
     <div className="space-y-6">
@@ -115,9 +121,9 @@ export function CheckpointsView() {
         head={head}
         lag={lag}
         status={status}
-        interval={interval}
         txPerSec={throughput.data ?? null}
         protocolVersion={chain.data?.protocolVersion ?? null}
+        nextEpochInMs={nextEpochInMs}
         frozen={frozen}
       />
       <Panel>

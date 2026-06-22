@@ -241,11 +241,6 @@ export type Liveness = 'live' | 'lagging' | 'stalled'
 export const TIP_LAGGING_MS = 5_000
 export const TIP_STALLED_MS = 15_000
 
-// Cadence warning threshold (ms/checkpoint): every current Sui network seals well
-// under a second, so a multi-second average over the window means production has
-// slowed — a clock-independent signal that complements tip freshness.
-export const INTERVAL_WARN_MS = 2_000
-
 /** Liveness tier from how stale the chain tip is (ms behind wall-clock). */
 export function livenessForLag(lagMs: number): Liveness {
   if (lagMs >= TIP_STALLED_MS) return 'stalled'
@@ -261,18 +256,4 @@ export function tipLagMs(timestamp: string | null, now: number): number | null {
   const t = new Date(timestamp).getTime()
   if (Number.isNaN(t)) return null
   return Math.max(0, now - t)
-}
-
-/** Mean interval between checkpoints across the window (ms), from its newest and
- *  oldest timestamps. `null` with fewer than two usable timestamps. */
-export function avgCheckpointIntervalMs(
-  checkpoints: CheckpointSummary[],
-): number | null {
-  const times = checkpoints
-    .map((c) => (c.timestamp ? new Date(c.timestamp).getTime() : NaN))
-    .filter((t) => !Number.isNaN(t))
-  if (times.length < 2) return null
-  // `times` is newest-first: the span between the extremes over the gap count.
-  const span = times[0] - times[times.length - 1]
-  return span / (times.length - 1)
 }

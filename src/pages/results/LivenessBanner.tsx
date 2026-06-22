@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Pause } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
-import { INTERVAL_WARN_MS, type CheckpointTip, type Liveness } from '@/lib/checkpoint'
+import { type CheckpointTip, type Liveness } from '@/lib/checkpoint'
 import { formatAge, formatCount } from '@/lib/format'
 import { cn } from '@/lib/cn'
 
@@ -23,9 +23,9 @@ export function LivenessBanner({
   head,
   lag,
   status,
-  interval,
   txPerSec,
   protocolVersion,
+  nextEpochInMs,
   frozen,
 }: {
   /** The chain tip, or `null` until the first poll resolves. */
@@ -33,17 +33,16 @@ export function LivenessBanner({
   /** Tip freshness (ms behind wall-clock), or `null` when undatable. */
   lag: number | null
   status: Liveness
-  /** Mean inter-checkpoint interval over the window (ms); `null` if unknown. */
-  interval: number | null
   /** Programmable (non-system) transactions per second; `null` until measured. */
   txPerSec: number | null
   /** The network's current protocol version; `null` until resolved. */
   protocolVersion: number | null
+  /** Estimated time left until the next epoch (ms); `null` until derived. */
+  nextEpochInMs: number | null
   /** Whether the feed below is paused for inspection (the verdict stays live). */
   frozen: boolean
 }) {
   const meta = STATUS_META[status]
-  const intervalOff = interval != null && interval >= INTERVAL_WARN_MS
   const tpsTitle =
     txPerSec == null
       ? undefined
@@ -74,16 +73,17 @@ export function LivenessBanner({
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 font-mono text-xs">
         <Stat label="tip" tone="text-primary" value={head ? `#${head.sequenceNumber.toLocaleString()}` : '—'} />
         <Stat label="age" tone={meta.cls} value={lag == null ? '—' : formatAge(lag)} />
-        <Stat
-          label="cadence"
-          tone={intervalOff ? 'text-danger' : undefined}
-          title="average interval between checkpoints"
-          value={interval == null ? '—' : `${Math.round(interval)}ms`}
-        />
         <Stat label="tx/s" title={tpsTitle} value={txPerSec == null ? '—' : formatCount(Math.round(txPerSec))} />
         <Stat label="tx/min" title={tpmTitle} value={txPerSec == null ? '—' : formatCount(Math.round(txPerSec * 60))} />
         <Stat label="signers" value={head?.signers ?? '—'} />
         <Stat label="epoch" value={head?.epochId ?? '—'} />
+        <Stat
+          label="next epoch"
+          title="scheduled boundary (on-chain epoch start + protocol epoch duration); the actual transition can vary by a second or two"
+          value={
+            nextEpochInMs == null ? '—' : nextEpochInMs <= 0 ? '~now' : `~${formatAge(nextEpochInMs)}`
+          }
+        />
         <Stat label="protocol" title="current protocol version" value={protocolVersion ?? '—'} />
       </div>
     </div>
