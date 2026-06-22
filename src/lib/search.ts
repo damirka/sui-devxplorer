@@ -14,6 +14,8 @@ export type SearchKind =
   | 'package'
   | 'suins'
   | 'mvr'
+  /** The network-liveness dashboard — a keyword, not an on-chain id. */
+  | 'checkpoints'
   | 'unknown'
 
 export interface SearchResultKind {
@@ -66,6 +68,11 @@ export function detectSearchKind(input: string): SearchResultKind {
   const trimmed = input.trim()
 
   if (!trimmed) return { kind: 'unknown', value: '', raw }
+
+  // Network-liveness dashboard — a reserved keyword, not an entity id.
+  if (/^(checkpoints?|cp|liveness)$/i.test(trimmed)) {
+    return { kind: 'checkpoints', value: 'checkpoints', raw }
+  }
 
   // Move Registry name: `@namespace/app` (optionally a `/version` suffix). The
   // `/` is what distinguishes it from a SuiNS `@handle`. Resolved to a package

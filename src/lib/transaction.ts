@@ -979,6 +979,8 @@ export type TxFilter =
   | { affectedAddress: string }
   /** A package id, `pkg::module`, or `pkg::module::function` — txs that call it. */
   | { function: string }
+  /** Transactions sealed in a given checkpoint, by sequence number. */
+  | { atCheckpoint: number }
 
 export interface TxListItem {
   digest: string

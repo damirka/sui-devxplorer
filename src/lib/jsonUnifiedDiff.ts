@@ -132,14 +132,22 @@ function hunkify(ops: Op[], context: number): UnifiedDiffRow[] {
   return rows
 }
 
-/** Guard against pathologically large objects — the LCS table is O(n·m). */
+// Guard against a pathologically large *change* — the LCS table is O(n·m) over
+// the differing region only (the common head/tail are peeled off first), so this
+// bounds the genuinely-rewritten case, not merely a large-but-barely-touched one.
 const MAX_CELLS = 2_000_000
 
 /**
  * Build a unified diff of `before` → `after`. A `null` side (created/deleted)
- * makes every line an add/remove. Returns `null` when the object is too large to
- * diff inline (caller should fall back); `adds === removes === 0` means the
- * transaction left the contents unchanged.
+ * makes every line an add/remove. Returns `null` only when the *changed* region
+ * is too large to diff inline (caller should fall back); `adds === removes === 0`
+ * means the transaction left the contents unchanged.
+ *
+ * The common prefix/suffix are trimmed before the LCS so a big object with a
+ * small change stays cheap (those unchanged lines are LCS members by definition,
+ * and `hunkify` collapses them to gap markers anyway). This is what lets a
+ * 7k-line object whose tx touched ~10 lines diff at all — full `n·m` would be
+ * ~60M cells, but the differing middle is ~100.
  */
 export function unifiedJsonDiff(
   before: unknown,
@@ -149,12 +157,37 @@ export function unifiedJsonDiff(
   const context = opts.context ?? 3
   const beforeLines = before == null ? [] : prettyJsonLines(before, opts.label)
   const afterLines = after == null ? [] : prettyJsonLines(after, opts.label)
-  if (beforeLines.length * afterLines.length > MAX_CELLS) return null
+  const n = beforeLines.length
+  const m = afterLines.length
 
-  const ops = lcsDiff(beforeLines, afterLines)
+  // Peel the common prefix, then the common suffix (bounded so it can't overlap
+  // the prefix). What's left is the only region the LCS actually needs to run on.
+  let pre = 0
+  while (pre < n && pre < m && beforeLines[pre] === afterLines[pre]) pre++
+  let suf = 0
+  while (
+    suf < n - pre &&
+    suf < m - pre &&
+    beforeLines[n - 1 - suf] === afterLines[m - 1 - suf]
+  ) {
+    suf++
+  }
+
+  const midN = n - pre - suf
+  const midM = m - pre - suf
+  if (midN * midM > MAX_CELLS) return null
+
+  // eq ops for the trimmed head/tail bracket the LCS of the differing middle.
+  const eq = (text: string): Op => ({ kind: 'eq', text })
+  const ops: Op[] = [
+    ...beforeLines.slice(0, pre).map(eq),
+    ...lcsDiff(beforeLines.slice(pre, n - suf), afterLines.slice(pre, m - suf)),
+    ...beforeLines.slice(n - suf).map(eq),
+  ]
+
   return {
     rows: hunkify(ops, context),
-    adds: ops.reduce((n, o) => n + (o.kind === 'ins' ? 1 : 0), 0),
-    removes: ops.reduce((n, o) => n + (o.kind === 'del' ? 1 : 0), 0),
+    adds: ops.reduce((c, o) => c + (o.kind === 'ins' ? 1 : 0), 0),
+    removes: ops.reduce((c, o) => c + (o.kind === 'del' ? 1 : 0), 0),
   }
 }

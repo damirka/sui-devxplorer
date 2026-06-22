@@ -2,6 +2,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Logo } from './Logo'
 import { SearchBar } from '@/components/ui/SearchBar'
 import { NetworkSelect } from '@/components/ui/NetworkSelect'
+import { LivenessIndicator } from '@/components/ui/LivenessIndicator'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 
 export function Header() {
@@ -23,6 +24,7 @@ export function Header() {
         )}
 
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          <LivenessIndicator />
           <NetworkSelect />
           <ThemeToggle />
         </div>

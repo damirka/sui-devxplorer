@@ -11,6 +11,7 @@ const HINTS: { example: string; label: string }[] = [
   { example: '@adeniyi', label: 'suins' },
   { example: '@deepbook/core', label: 'mvr' },
   { example: 'CiWfdYkKqsvkxp7DSWhjLjtyosvhea9vS1kPcZnNvghM', label: 'txs' },
+  { example: 'checkpoints', label: 'liveness' },
 ]
 
 /** Landing: the prompt is the search, centered in the viewport, with a few

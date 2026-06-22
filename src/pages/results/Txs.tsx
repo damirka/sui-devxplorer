@@ -1,11 +1,10 @@
 import { useState } from 'react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Pager, usePagedList } from '@/components/ui/Pager'
-import { DataList } from '@/components/ui/DataList'
 import { useNetwork } from '@/context/useNetwork'
 import { fetchTransactions, type TxFilter } from '@/lib/transaction'
 import { cn } from '@/lib/cn'
-import { TransactionRow } from './TransactionRow'
+import { TransactionList } from './TransactionList'
 
 /** What the id relates to: txs it signed, touched it, or called into it. */
 export type TxRelation = 'sent' | 'object' | 'function'
@@ -53,7 +52,7 @@ export function Txs({
       <PanelSection
         label={label}
         action={
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <LiveControl
               live={live}
               onToggle={() => setLive((v) => !v)}
@@ -64,19 +63,13 @@ export function Txs({
           </div>
         }
       >
-        <DataList loading={loading} error={error} items={items} empty="no transactions.">
-          {(tx, i) => (
-            <TransactionRow
-              key={tx.digest}
-              index={i + 1}
-              digest={tx.digest}
-              timestamp={tx.timestamp}
-              sender={showSender ? tx.sender : null}
-              status={tx.status}
-              gas={tx.gas}
-            />
-          )}
-        </DataList>
+        <TransactionList
+          items={items}
+          loading={loading}
+          error={error}
+          empty="no transactions."
+          showSender={showSender}
+        />
       </PanelSection>
     </Panel>
   )

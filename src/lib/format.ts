@@ -108,6 +108,21 @@ export function formatCount(n: number): string {
   return String(n)
 }
 
+/**
+ * A compact elapsed-time label from a millisecond duration: `0.8s`, `4.2s`,
+ * `47s`, `1m 03s`, `2h 05m`. Sub-10s keeps one decimal so a live "age" reads
+ * smoothly as it ticks; negative inputs clamp to `0.0s`.
+ */
+export function formatAge(ms: number): string {
+  const s = (ms > 0 ? ms : 0) / 1000
+  if (s < 10) return `${s.toFixed(1)}s`
+  if (s < 60) return `${Math.round(s)}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ${String(Math.floor(s % 60)).padStart(2, '0')}s`
+  const h = Math.floor(m / 60)
+  return `${h}h ${String(m % 60).padStart(2, '0')}m`
+}
+
 /** Format an ISO timestamp as a readable absolute time; `—` when missing. */
 export function formatTimestamp(iso: string | null | undefined): string {
   if (!iso) return '—'

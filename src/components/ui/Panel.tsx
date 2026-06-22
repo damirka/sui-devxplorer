@@ -45,7 +45,7 @@ export function PanelSection({
       className={cn('border-line border-b p-5 last:border-b-0', className)}
     >
       {(label || action) && (
-        <header className="mb-4 flex items-center gap-3">
+        <header className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
           {index != null && <span className="panel-index">{fmtIndex(index)}</span>}
           {label && <span className="panel-label">{label}</span>}
           <span className="rule" />
