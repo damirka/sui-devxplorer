@@ -268,6 +268,7 @@ function GroupPanel({
                 index={i + 1}
                 v={v}
                 view={view}
+                active={group === 'active'}
                 powerShare={maxPower > 0 ? v.votingPower / maxPower : 0}
                 projectedVotingPower={
                   nextTotal > 0n ? Number((v.nextEpochStake * 10000n) / nextTotal) : null

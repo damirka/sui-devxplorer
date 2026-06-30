@@ -140,6 +140,7 @@ export function ValidatorRow({
   index,
   v,
   view,
+  active = true,
   powerShare,
   projectedVotingPower = null,
   referenceGasPrice,
@@ -152,6 +153,11 @@ export function ValidatorRow({
   /** `next` swaps the stake / commission / gas columns to their next-epoch
    *  values and shows the per-column delta. */
   view: ValidatorView
+  /** Whether this is the active set. The lifecycle-risk highlight (at-risk /
+   *  leaving / removing) is an active-set mechanic, so it's suppressed on the
+   *  pending / candidate / inactive tabs — where e.g. every validator already
+   *  carries a deactivation epoch and would otherwise all read as "leaving". */
+  active?: boolean
   powerShare: number
   /** Estimated next-epoch voting power (active set only) — drives the at-risk /
    *  removal row highlight; `null` where the mechanic doesn't apply. */
@@ -191,8 +197,8 @@ export function ValidatorRow({
       : 'gas price (MIST)'
 
   // Lifecycle-risk status → tints the whole summary line (red for leaving /
-  // removal, amber for at-risk) and shows a matching chip.
-  const status = rowStatus(v, projectedVotingPower)
+  // removal, amber for at-risk) and shows a matching chip. Active set only.
+  const status = active ? rowStatus(v, projectedVotingPower) : null
   return (
     <li ref={rowRef}>
       <Link
