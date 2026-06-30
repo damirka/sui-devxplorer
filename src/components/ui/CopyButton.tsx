@@ -1,6 +1,6 @@
-import { useCallback, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { useCopy } from './useCopy'
 
 export function CopyButton({
   value,
@@ -11,19 +11,12 @@ export function CopyButton({
   className?: string
   label?: string
 }) {
-  const [copied, setCopied] = useState(false)
-
-  const onCopy = useCallback(() => {
-    void navigator.clipboard.writeText(value).then(() => {
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1200)
-    })
-  }, [value])
+  const { copied, copy } = useCopy()
 
   return (
     <button
       type="button"
-      onClick={onCopy}
+      onClick={() => copy(value)}
       aria-label={label}
       title={label}
       className={cn(

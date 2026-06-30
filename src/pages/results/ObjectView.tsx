@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Diff, Eye } from 'lucide-react'
+import { Diff, Eye, Network as NetworkIcon } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Panel, PanelSection } from '@/components/ui/Panel'
-import { LinkedHash, TypeLink, useVersionHref } from '@/components/ui/links'
+import { LinkedHash, TypeLink, useSearchHref, useVersionHref } from '@/components/ui/links'
+import { frameworkTagFor, normalizeSuiId } from '@/lib/search'
+import { formatTimestamp } from '@/lib/format'
 import { JsonTree } from '@/components/ui/JsonTree'
 import { CODE_PRE, DANGER_PRE } from '@/components/ui/codeBlock'
 import { cn } from '@/lib/cn'
@@ -16,6 +18,7 @@ import {
   fetchObject,
   fetchDisplayDefinition,
   fetchTypeDefinition,
+  fetchVersionedInner,
   describeOwner,
   type SuiObject,
 } from '@/lib/object'
@@ -38,12 +41,155 @@ import { OwnedUpgradeCaps } from './OwnedUpgradeCaps'
 import { Balances } from './Balances'
 import { DisplayModal } from './DisplayModal'
 import { fetchDefaultSuinsName, atName } from '@/lib/suins'
+import { isStakedSuiType } from '@/lib/staking'
+import { resolveMvrType } from '@/lib/mvr'
 import {
   StructDeclaration,
   innerValueSignature,
   innerKeySignature,
   reprFromSignature,
 } from './moveType'
+
+// The Sui system state at 0x5 gets a full callout — it backs the validators
+// dashboard, which the callout links to. Its inner value (the versioned
+// `SuiSystemStateInnerV2` that actually holds the validator set) has a fixed,
+// every-network id and gets the same callout.
+const SYSTEM_STATE_ID = normalizeSuiId('5')
+const SYSTEM_STATE_INNER_ID = normalizeSuiId(
+  '5b890eaf2abcfa2ab90b77b8e6f3d5d8609586c3e583baf3dccd5af17edf48d1',
+)
+// The bridge object 0x9 — kept only for the `paused` header badge, which reads a
+// bridge-specific field of its inner state. Its header tag (and the inner-value
+// panel below) are handled generically, by id-agnostic detection.
+const BRIDGE_ID = normalizeSuiId('9')
+
+// An object's `0x2::versioned::Versioned` field — matched in any zero-padded form.
+// Such an object keeps its real state in the Versioned's single dynamic field one
+// hop deeper, so (when it has no dynamic fields of its own) we surface that inner
+// value in place of an empty dynamic-fields panel. See `DynamicFields`.
+const VERSIONED_TYPE = /^0x0*2::versioned::Versioned$/
+
+/** Find a `Versioned` field in an object's struct definition + flattened
+ *  contents: its wrapped object id and version. `null` when there is none. */
+function versionedField(
+  typeDef: { fields: { name: string; type: { repr: string } }[] } | null,
+  json: unknown,
+): { versionedId: string; version: string | null } | null {
+  const field = typeDef?.fields.find((f) => VERSIONED_TYPE.test(f.type.repr))
+  if (!field) return null
+  const v = (json as Record<string, unknown> | null | undefined)?.[field.name] as
+    | { id?: unknown; version?: unknown }
+    | undefined
+  const id = typeof v?.id === 'string' ? v.id : null
+  if (!id) return null
+  const version =
+    v?.version != null && (typeof v.version === 'string' || typeof v.version === 'number')
+      ? String(v.version)
+      : null
+  return { versionedId: id, version }
+}
+
+// The SuiNS registration NFT, as an MVR *type* name. Detection is strict: the
+// object's type must equal this name resolved through MVR for the current network
+// (`resolveMvrType`) — a lookalike package with the same `module::struct` is NOT
+// a SuiNS registration. Pinned to `/1` (where the struct is defined; the
+// unversioned `@suins/core` is a facade). A cheap `module::struct` regex only
+// gates *whether to resolve*, never the verdict.
+const SUINS_REGISTRATION_MVR = '@suins/core/1::suins_registration::SuinsRegistration'
+const SUINS_MODULE_STRUCT = /::suins_registration::SuinsRegistration$/
+
+/** Pull a SuiNS registration's domain + expiry out of its Move contents. */
+function suinsFields(json: unknown): { domain: string | null; expirationMs: number | null } {
+  const j = (json ?? {}) as { domain_name?: unknown; expiration_timestamp_ms?: unknown }
+  const domain = typeof j.domain_name === 'string' ? j.domain_name : null
+  const raw = j.expiration_timestamp_ms
+  const ms = typeof raw === 'string' || typeof raw === 'number' ? Number(raw) : NaN
+  return { domain, expirationMs: Number.isFinite(ms) ? ms : null }
+}
+
+/** The one-line note shown under the header for a SuiNS registration: the domain
+ *  and its expiry as a readable timestamp (red once past). */
+function SuinsNote({
+  domain,
+  expirationMs,
+  now,
+}: {
+  domain: string | null
+  expirationMs: number | null
+  now: number
+}) {
+  const expired = expirationMs != null && expirationMs < now
+  return (
+    <div className="border-line bg-surface-2 mb-6 border px-4 py-3 font-mono text-xs">
+      <p className="text-muted leading-relaxed">
+        {domain ? <span className="text-primary">{domain}</span> : 'A SuiNS name'} — a
+        SuiNS name registration.
+        {expirationMs != null && (
+          <>
+            {' '}
+            {expired ? (
+              <span className="text-danger">expired</span>
+            ) : (
+              'expires'
+            )}{' '}
+            <span className={expired ? 'text-danger' : 'text-text'}>
+              {formatTimestamp(new Date(expirationMs).toISOString())}
+            </span>
+            .
+          </>
+        )}
+      </p>
+    </div>
+  )
+}
+
+type SystemVariant = 'object' | 'inner'
+
+/** The system-state callout shown atop 0x5 / its inner value: a tag, which body
+ *  to render, and a nudge to the validators dashboard. `null` for anything else
+ *  (other framework objects are marked with a header tag, not a callout). */
+function systemHintFor(value: string): { tag: string; variant: SystemVariant } | null {
+  if (value === SYSTEM_STATE_ID) return { tag: 'system state', variant: 'object' }
+  if (value === SYSTEM_STATE_INNER_ID)
+    return { tag: 'system state · inner', variant: 'inner' }
+  return null
+}
+
+/** The 0x5 system-state callout (its tag sits in the header). A one-line
+ *  description — the "validator set" phrase itself links to the dashboard — with
+ *  a "view validators →" action on the right. */
+function SystemObjectHint({ variant }: { variant: SystemVariant }) {
+  const searchHref = useSearchHref()
+  const setLink = (text: string) => (
+    <Link to={searchHref('validators')} className="text-primary hover:underline">
+      {text}
+    </Link>
+  )
+  return (
+    <div className="border-primary/40 bg-primary/5 mb-6 flex flex-wrap items-center gap-x-3 gap-y-2 border px-4 py-3 font-mono text-xs">
+      <NetworkIcon size={13} className="text-primary shrink-0" />
+      <p className="text-muted min-w-0 flex-1 leading-relaxed">
+        {variant === 'object' ? (
+          <>
+            The on-chain home of the {setLink('validator set')}, current epoch,
+            reference gas price, and staking parameters.
+          </>
+        ) : (
+          <>
+            0x5's dynamic field (SuiSystemStateInnerV2) — the full{' '}
+            {setLink('validator set')}, total stake, and epoch parameters.
+          </>
+        )}
+      </p>
+      <Link
+        to={searchHref('validators')}
+        className="text-primary shrink-0 font-semibold whitespace-nowrap hover:underline"
+      >
+        view validators →
+      </Link>
+    </div>
+  )
+}
 
 export function ObjectView({
   value,
@@ -84,6 +230,25 @@ export function ObjectView({
   const domain = alias ?? reverse.data
 
   const obj = data?.object ?? null
+  // Nudge toward the validators dashboard when this is 0x5 or its inner state.
+  const systemHint = systemHintFor(value)
+  // A terse "what is this" tag for well-known framework objects/packages.
+  const frameworkTag = frameworkTagFor(value)
+  // A SuiNS registration NFT — tagged, with its expiry surfaced below the header.
+  // Strict: the object's type must equal the MVR-resolved `@suins/core/1` type
+  // for this network. The `module::struct` regex is only a cheap gate so we don't
+  // resolve MVR on every object page; the equality check is the actual verdict.
+  const objType = obj?.asMoveObject?.contents?.type.repr ?? null
+  const looksSuins = !!objType && SUINS_MODULE_STRUCT.test(objType)
+  const suinsType = useAsync(
+    (signal) =>
+      looksSuins ? resolveMvrType(network, SUINS_REGISTRATION_MVR, signal) : Promise.resolve(null),
+    [network, looksSuins],
+  )
+  const suins =
+    objType != null && suinsType.data != null && objType === suinsType.data
+      ? suinsFields(obj?.asMoveObject?.contents?.json)
+      : null
   // A package is just an immutable object, but it reads as a "package" to a
   // dev — so once loaded, badge it as one. Unknown until the fetch resolves.
   const isPackage = !!obj?.asMovePackage
@@ -106,6 +271,36 @@ export function ObjectView({
     [network, value, isAddress],
   )
 
+  // On the bridge object (0x9), read its inner `paused` flag so the header can
+  // badge whether transfers are live or halted. 0x9 wraps its state in an
+  // `inner: Versioned`; resolve that Versioned's value object and read `paused`.
+  // Only runs on the bridge page, once the object's contents are loaded.
+  const bridgeVersionedId =
+    value === BRIDGE_ID
+      ? (() => {
+          const inner = (
+            obj?.asMoveObject?.contents?.json as { inner?: { id?: unknown } } | undefined
+          )?.inner?.id
+          return typeof inner === 'string' ? inner : null
+        })()
+      : null
+  const bridge = useAsync(
+    async (signal) => {
+      if (!bridgeVersionedId) return null
+      const inner = await fetchVersionedInner(network, bridgeVersionedId, signal)
+      return inner ? fetchObject(network, inner.id, null, signal) : null
+    },
+    [network, bridgeVersionedId],
+  )
+  const bridgePaused: boolean | null = (() => {
+    if (value !== BRIDGE_ID) return null
+    const json = bridge.data?.object?.asMoveObject?.contents?.json as
+      | { value?: { paused?: unknown } }
+      | undefined
+    const p = json?.value?.paused
+    return typeof p === 'boolean' ? p : null
+  })()
+
   // Display data for the modal, read from the live `obj` (null while a version
   // reloads — the modal retains the last render across that gap).
   const display = obj?.asMoveObject?.contents?.display?.output
@@ -121,18 +316,38 @@ export function ObjectView({
         label={isPackage ? 'Package' : isAddress ? 'Address' : 'Object'}
         value={value}
         meta={
-          <span className="flex flex-wrap items-center gap-2">
+          <>
+            {frameworkTag && <Badge>{frameworkTag}</Badge>}
+            {systemHint && <Badge>{systemHint.tag}</Badge>}
+            {isStakedSuiType(objType) && <Badge>staked sui</Badge>}
+            {suins && <Badge kind="suins">suins</Badge>}
+            {bridgePaused != null && (
+              <Badge
+                tone={bridgePaused ? 'danger' : undefined}
+                title={
+                  bridgePaused
+                    ? 'the bridge is paused — token transfers are halted'
+                    : 'the bridge is active — token transfers are live'
+                }
+              >
+                {bridgePaused ? 'paused' : 'active'}
+              </Badge>
+            )}
             {(isPackage || mvrName) && (
               <MvrChip packageId={value} knownName={mvrName} />
             )}
             {domain && <Badge kind="suins">{atName(domain)}</Badge>}
             {signer.data && <Badge>{signer.data.scheme}</Badge>}
-            {obj && !isPackage && version != null && (
-              <Badge>v{obj.version}</Badge>
-            )}
-          </span>
+            {obj && !isPackage && version != null && <Badge>v{obj.version}</Badge>}
+          </>
         }
       />
+
+      {systemHint && <SystemObjectHint variant={systemHint.variant} />}
+
+      {suins && (
+        <SuinsNote domain={suins.domain} expirationMs={suins.expirationMs} now={Date.now()} />
+      )}
 
       {loading && (
         <Panel>
@@ -304,6 +519,11 @@ function MoveObjectBody({
   // always reflect the *latest* object, so we hide them on a historical
   // snapshot rather than show stale-looking current data next to old contents.
   const live = !historical
+  // A `0x2::versioned::Versioned` field means this object's real state is one hop
+  // deeper. When it has no dynamic fields of its own, the dynamic-fields panel
+  // surfaces that inner value instead (see `DynamicFields`). Detected from the
+  // struct definition + contents — no extra fetch.
+  const versioned = versionedField(typeDef.data, move?.contents?.json)
 
   return (
     <div className="space-y-6">
@@ -407,8 +627,10 @@ function MoveObjectBody({
           </PanelSection>
         </Panel>
 
-        {/* Dynamic fields resolve to the live object only — hide on a snapshot. */}
-        {live && <DynamicFields id={data.address} />}
+        {/* Dynamic fields resolve to the live object only — hide on a snapshot.
+            When the object wraps its state in a `Versioned` and has no dynamic
+            fields of its own, the panel surfaces that inner value instead. */}
+        {live && <DynamicFields id={data.address} versioned={versioned} />}
       </div>
 
       {/* Display renders from THIS node's contents (the resolver applies the

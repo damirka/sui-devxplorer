@@ -21,9 +21,11 @@ export function Field({
     )
   }
   return (
-    <div className="space-y-2">
+    // `min-w-0` lets the cell shrink inside its grid track so long values (e.g. a
+    // project URL) can truncate instead of overflowing the panel.
+    <div className="min-w-0 space-y-2">
       <span className="panel-label">{label}</span>
-      <div>{children}</div>
+      <div className="min-w-0">{children}</div>
     </div>
   )
 }

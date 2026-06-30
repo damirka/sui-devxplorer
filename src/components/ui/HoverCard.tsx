@@ -14,15 +14,25 @@ export function HoverCard({
   children,
   card,
   className,
+  align = 'left',
 }: {
   children: ReactNode
   card: ReactNode
   className?: string
+  /** Which edge the card is anchored to — `right` grows it leftward, so a
+   *  trigger near the viewport's right edge (e.g. a right-aligned column) doesn't
+   *  push the card off-screen. */
+  align?: 'left' | 'right'
 }) {
   return (
     <span className={cn('group/hc relative inline-block', className)}>
       {children}
-      <span className="pointer-events-none invisible absolute top-full left-0 z-30 pt-1.5 opacity-0 transition-opacity duration-100 group-hover/hc:visible group-hover/hc:pointer-events-auto group-hover/hc:opacity-100">
+      <span
+        className={cn(
+          'pointer-events-none invisible absolute top-full z-30 pt-1.5 opacity-0 transition-opacity duration-100 group-hover/hc:visible group-hover/hc:pointer-events-auto group-hover/hc:opacity-100',
+          align === 'right' ? 'right-0' : 'left-0',
+        )}
+      >
         <span className="border-line bg-surface glow block w-max max-w-md border p-3 text-xs">
           {card}
         </span>

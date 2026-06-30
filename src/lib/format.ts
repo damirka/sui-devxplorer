@@ -87,6 +87,47 @@ export function formatSui(mist: string | number | bigint | null | undefined): st
   return formatTokenAmount(mist, 9, 'SUI')
 }
 
+/**
+ * Compact SUI amount from a MIST integer: `7.2B SUI`, `10M SUI`, `412 SUI`. For
+ * dense stat strips where exactness doesn't matter — use {@link formatSui} where
+ * it does (this rounds to whole SUI and loses the fractional part).
+ */
+export function formatSuiCompact(
+  mist: string | number | bigint | null | undefined,
+): string {
+  if (mist == null) return '—'
+  let n: bigint
+  try {
+    n = BigInt(mist)
+  } catch {
+    return String(mist)
+  }
+  return formatCount(Math.round(Number(n) / 1e9)) + ' SUI'
+}
+
+/**
+ * Whole-SUI amount with thousands separators and no decimals: `2,542,764 SUI`.
+ * For dense readouts (tooltips, breakdowns) where sub-SUI precision is just noise
+ * — the full-precision {@link formatSui} stays for a validator's detailed view.
+ */
+export function formatSuiWhole(
+  mist: string | number | bigint | null | undefined,
+): string {
+  if (mist == null) return '—'
+  let n: bigint
+  try {
+    n = BigInt(mist)
+  } catch {
+    return String(mist)
+  }
+  const neg = n < 0n
+  const abs = neg ? -n : n
+  const base = 10n ** 9n
+  // Round to the nearest whole SUI rather than truncating.
+  const whole = (abs + base / 2n) / base
+  return (neg ? '−' : '') + whole.toLocaleString('en-US') + ' SUI'
+}
+
 /** Compact count: `942`, `1.2k`, `3.4M`, `1.1B`. For call counts / totals. */
 export function formatCount(n: number): string {
   const abs = Math.abs(n)
@@ -121,6 +162,17 @@ export function formatAge(ms: number): string {
   if (m < 60) return `${m}m ${String(Math.floor(s % 60)).padStart(2, '0')}s`
   const h = Math.floor(m / 60)
   return `${h}h ${String(m % 60).padStart(2, '0')}m`
+}
+
+/**
+ * A next-epoch countdown from the milliseconds remaining: `—` when unknown,
+ * `~now` at/after the boundary, else a `~`-prefixed {@link formatAge} (`~4h 12m`).
+ * Shared by the liveness banner, the validator summary, and the landing live
+ * strip so the "next epoch" readout reads identically everywhere.
+ */
+export function formatNextEpoch(remainingMs: number | null): string {
+  if (remainingMs == null) return '—'
+  return remainingMs <= 0 ? '~now' : `~${formatAge(remainingMs)}`
 }
 
 /** Format an ISO timestamp as a readable absolute time; `—` when missing. */

@@ -16,6 +16,8 @@ export type SearchKind =
   | 'mvr'
   /** The network-liveness dashboard — a keyword, not an on-chain id. */
   | 'checkpoints'
+  /** The active validator-set dashboard — a keyword, not an on-chain id. */
+  | 'validators'
   | 'unknown'
 
 export interface SearchResultKind {
@@ -63,6 +65,47 @@ export function truncateMiddle(value: string, lead = 6, tail = 4): string {
   return `${value.slice(0, lead)}…${value.slice(-tail)}`
 }
 
+/** A well-known framework object/package at a fixed, every-network id. */
+export interface FrameworkObject {
+  /** Normalized 0x… id. */
+  id: string
+  /** Header display tag (e.g. `clock`, `bridge`). */
+  tag: string
+  /** Search aliases that resolve to this id (e.g. `random` → 0x8). */
+  keywords?: string[]
+}
+
+/**
+ * The single registry behind both the header tag (what an id *is*) and the
+ * keyword search aliases (typing `random` opens 0x8) — add an entry here and both
+ * layers pick it up. 0x5 (system state) is intentionally absent: ObjectView gives
+ * it a richer callout, not a terse tag.
+ */
+export const FRAMEWORK_OBJECTS: FrameworkObject[] = [
+  { id: normalizeSuiId('1'), tag: 'move stdlib' },
+  { id: normalizeSuiId('2'), tag: 'sui framework' },
+  { id: normalizeSuiId('3'), tag: 'sui system' },
+  { id: normalizeSuiId('6'), tag: 'clock', keywords: ['clock'] },
+  { id: normalizeSuiId('8'), tag: 'randomness', keywords: ['random', 'randomness'] },
+  { id: normalizeSuiId('9'), tag: 'bridge object' },
+  { id: normalizeSuiId('a'), tag: 'address alias' },
+  { id: normalizeSuiId('b'), tag: 'bridge', keywords: ['bridge'] },
+  { id: normalizeSuiId('c'), tag: 'coin registry' },
+  { id: normalizeSuiId('d'), tag: 'display registry' },
+  { id: normalizeSuiId('acc'), tag: 'accumulator', keywords: ['accumulator'] },
+  { id: normalizeSuiId('403'), tag: 'deny list' },
+]
+
+const FRAMEWORK_TAG_BY_ID = new Map(FRAMEWORK_OBJECTS.map((o) => [o.id, o.tag]))
+const FRAMEWORK_ID_BY_KEYWORD = new Map(
+  FRAMEWORK_OBJECTS.flatMap((o) => (o.keywords ?? []).map((k) => [k, o.id] as const)),
+)
+
+/** The header tag for a well-known framework id (e.g. `bridge`), or `null`. */
+export function frameworkTagFor(id: string): string | null {
+  return FRAMEWORK_TAG_BY_ID.get(id) ?? null
+}
+
 export function detectSearchKind(input: string): SearchResultKind {
   const raw = input
   const trimmed = input.trim()
@@ -72,6 +115,18 @@ export function detectSearchKind(input: string): SearchResultKind {
   // Network-liveness dashboard — a reserved keyword, not an entity id.
   if (/^(checkpoints?|cp|liveness)$/i.test(trimmed)) {
     return { kind: 'checkpoints', value: 'checkpoints', raw }
+  }
+
+  // Active validator-set dashboard — a reserved keyword, not an entity id.
+  if (/^(validators?|vals?|validator-?set)$/i.test(trimmed)) {
+    return { kind: 'validators', value: 'validators', raw }
+  }
+
+  // Keyword aliases for well-known framework objects at fixed ids, so e.g.
+  // `random` opens 0x8 without having to remember the address.
+  const keywordId = FRAMEWORK_ID_BY_KEYWORD.get(trimmed.toLowerCase())
+  if (keywordId) {
+    return { kind: 'object', value: keywordId, raw }
   }
 
   // Move Registry name: `@namespace/app` (optionally a `/version` suffix). The

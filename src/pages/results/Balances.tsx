@@ -56,19 +56,33 @@ function rawBalance(raw: string): string {
 export function Balances({
   id,
   hideWhenEmpty = false,
+  defaultOpen = true,
 }: {
   id: string
   hideWhenEmpty?: boolean
+  /** Start collapsed (and don't fetch until first opened) — used for packages,
+   *  which rarely hold balances and shouldn't pay for the request by default. */
+  defaultOpen?: boolean
 }) {
   const { network } = useNetwork()
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(defaultOpen)
+  // Latch the fetch on first open: nothing loads while it's never been expanded
+  // (the point of `defaultOpen={false}`), and reopening stays instant afterwards.
+  const [everOpened, setEverOpened] = useState(defaultOpen)
+  const expand = () => {
+    setOpen((v) => !v)
+    setEverOpened(true)
+  }
 
-  // Always fetch the standard coins by exact type so they pin to the top no
-  // matter how deep they'd be in the paginated full list. Independent of the
-  // pager, so it's fetched once per owner.
+  // Fetch the standard coins by exact type so they pin to the top no matter how
+  // deep they'd be in the paginated full list. Independent of the pager, so it's
+  // fetched once per owner — and only once the panel has been opened.
   const { data: standardData, loading: standardLoading } = useAsync(
-    (signal) => fetchBalancesForTypes(network, id, STANDARD_TYPES, signal),
-    [network, id],
+    (signal) =>
+      everOpened
+        ? fetchBalancesForTypes(network, id, STANDARD_TYPES, signal)
+        : Promise.resolve<CoinBalance[]>([]),
+    [network, id, everOpened],
   )
   const standard = standardData ?? []
 
@@ -83,6 +97,7 @@ export function Balances({
   } = usePagedList(
     `${network}|${id}`,
     (args, signal) => fetchBalances(network, id, args, signal),
+    { enabled: everOpened },
   )
   // Pin the standard coins, in STANDARD_TYPES order. Source them from the
   // dedicated by-type fetch (which reaches coins sitting deep in the paginated
@@ -123,6 +138,7 @@ export function Balances({
 
   if (
     hideWhenEmpty &&
+    everOpened &&
     !loading &&
     !error &&
     rows.length === 0 &&
@@ -135,11 +151,7 @@ export function Balances({
     <Panel>
       <PanelSection
         label={
-          <CollapseToggle
-            open={open}
-            onToggle={() => setOpen((v) => !v)}
-            label="Balances"
-          />
+          <CollapseToggle open={open} onToggle={expand} label="Balances" />
         }
         action={
           // Pager only when expanded; the count stays visible either way so a

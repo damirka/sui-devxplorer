@@ -6,6 +6,7 @@ import { SkeletonLines } from '@/components/ui/Skeleton'
 import { useNetwork } from '@/context/useNetwork'
 import { usePolledAsync } from '@/lib/useAsync'
 import { useNow } from '@/lib/useNow'
+import { cn } from '@/lib/cn'
 import { fetchChainStatus } from '@/lib/chain'
 import {
   fetchRecentCheckpoints,
@@ -19,12 +20,11 @@ import {
 import { LivenessBanner } from './LivenessBanner'
 import { CheckpointRow } from './CheckpointRow'
 
-/** How many checkpoints the feed shows, and how often both polls refresh.
- *  Checkpoints land every ~0.2–0.3s, so a 2s `last:10` refresh turns the window
- *  over almost entirely each tick — which is why expanding a row *freezes* the
- *  feed (below). The tip poll and the 1s wall-clock tick keep the verdict current. */
-const COUNT = 10
+// Checkpoints land every ~0.2–0.3s, so a 2s refresh turns the window over almost
+// entirely each tick — which is why expanding a row *freezes* the feed (below).
+// The tip poll and the 1s wall-clock tick keep the verdict current.
 const POLL_MS = 2_000
+const PAGE_SIZES = [10, 25, 50]
 
 /**
  * Network-liveness dashboard. A tiny always-live poll of the chain tip drives the
@@ -39,6 +39,8 @@ export function CheckpointsView() {
   // One checkpoint can be expanded at a time; while one is, the feed is frozen.
   const [openSeq, setOpenSeq] = useState<number | null>(null)
   const frozen = openSeq != null
+  // How many recent checkpoints the live feed shows (a "last N" window, not paging).
+  const [count, setCount] = useState(10)
 
   // Liveness heartbeat — cheap, and never pauses (even while the feed is frozen),
   // so the banner verdict always reflects the real chain tip.
@@ -58,8 +60,8 @@ export function CheckpointsView() {
   // pollMs only re-arms the poll interval; the primary load keys on `[network]`,
   // so the frozen rows are preserved, not refetched.
   const feed = usePolledAsync(
-    (signal) => fetchRecentCheckpoints(network, COUNT, signal),
-    [network],
+    (signal) => fetchRecentCheckpoints(network, count, signal),
+    [network, count],
     frozen ? null : POLL_MS,
   )
   // A 1s clock so the tip "age" / verdict keep advancing between 2s polls — and
@@ -141,7 +143,7 @@ export function CheckpointsView() {
                 <Pause size={12} /> frozen · resume
               </button>
             ) : (
-              <span className="text-muted font-mono text-xs">last {feed.data.length}</span>
+              <PageSizeSwitch value={count} onChange={setCount} />
             )
           }
         >
@@ -161,6 +163,40 @@ export function CheckpointsView() {
           </ul>
         </PanelSection>
       </Panel>
+    </div>
+  )
+}
+
+/** A 10/25/50 toggle for how many recent checkpoints the live feed shows. */
+function PageSizeSwitch({
+  value,
+  onChange,
+}: {
+  value: number
+  onChange: (n: number) => void
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="checkpoints shown"
+      className="inline-flex items-center gap-1 font-mono text-xs"
+    >
+      {PAGE_SIZES.map((n) => (
+        <button
+          key={n}
+          type="button"
+          onClick={() => onChange(n)}
+          aria-pressed={value === n}
+          className={cn(
+            'border px-2 py-1 tabular-nums transition-colors',
+            value === n
+              ? 'border-primary text-primary bg-surface-2'
+              : 'border-line text-muted hover:border-primary hover:text-primary',
+          )}
+        >
+          {n}
+        </button>
+      ))}
     </div>
   )
 }

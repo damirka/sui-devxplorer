@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Pause } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { type CheckpointTip, type Liveness } from '@/lib/checkpoint'
-import { formatAge, formatCount } from '@/lib/format'
+import { formatAge, formatCount, formatNextEpoch } from '@/lib/format'
 import { cn } from '@/lib/cn'
 
 const STATUS_META: Record<Liveness, { label: string; cls: string; pulse: boolean }> = {
@@ -80,9 +80,7 @@ export function LivenessBanner({
         <Stat
           label="next epoch"
           title="scheduled boundary (on-chain epoch start + protocol epoch duration); the actual transition can vary by a second or two"
-          value={
-            nextEpochInMs == null ? '—' : nextEpochInMs <= 0 ? '~now' : `~${formatAge(nextEpochInMs)}`
-          }
+          value={formatNextEpoch(nextEpochInMs)}
         />
         <Stat label="protocol" title="current protocol version" value={protocolVersion ?? '—'} />
       </div>

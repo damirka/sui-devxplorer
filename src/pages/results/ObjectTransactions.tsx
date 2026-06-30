@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Pager, usePagedList } from '@/components/ui/Pager'
+import { LiveControl, useLivePoll } from '@/components/ui/LiveControl'
 import { DataList } from '@/components/ui/DataList'
 import { LinkedHash, useVersionHref } from '@/components/ui/links'
 import { useNetwork } from '@/context/useNetwork'
@@ -33,16 +34,28 @@ export function ObjectTransactions({
 }) {
   const { network } = useNetwork()
   const versionHref = useVersionHref()
+
+  // "Live" mode polls for new versions — each new version is a new tx that
+  // touched the object, landing at the top (the history is newest-first), so
+  // `usePagedList` pins to the first page and hides the pager while polling.
+  const { pollMs, controlProps } = useLivePoll()
+
   const { items, loading, error, paged, pagerProps } = usePagedList(
     `${network}|${id}`,
     (args, signal) => fetchObjectVersions(network, id, args, signal),
+    { pollMs },
   )
 
   return (
     <Panel>
       <PanelSection
         label="Transactions"
-        action={paged ? <Pager {...pagerProps} label="transactions" /> : undefined}
+        action={
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <LiveControl {...controlProps} />
+            {paged && <Pager {...pagerProps} label="transactions" />}
+          </div>
+        }
       >
         <DataList loading={loading} error={error} items={items} empty="no transactions.">
           {(v, i) => {

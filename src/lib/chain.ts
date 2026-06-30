@@ -15,6 +15,10 @@ export interface ChainStatus {
    *  scheduled time — the actual transition can still drift a second or two.
    *  `null` when unavailable. */
   nextEpochMs: number | null
+  /** Total SUI staked across the active validator set (MIST). A single cheap
+   *  validator-health figure — extracted as a scalar, so it costs ~bytes rather
+   *  than the whole (~290 KB) system-state blob. `null` when unavailable. */
+  totalStake: bigint | null
 }
 
 // `systemState.extract(path:)` pulls a single value out of the (large) system
@@ -28,6 +32,7 @@ query ChainStatus {
     systemState {
       epochStartMs: extract(path: "epoch_start_timestamp_ms") { json }
       epochDurationMs: extract(path: "parameters.epoch_duration_ms") { json }
+      totalStake: extract(path: "validators.total_stake") { json }
     }
   }
 }
@@ -47,6 +52,7 @@ export async function fetchChainStatus(
       systemState: {
         epochStartMs: { json: unknown } | null
         epochDurationMs: { json: unknown } | null
+        totalStake: { json: unknown } | null
       } | null
     } | null
   }>(network, CHAIN_STATUS_QUERY, {}, signal)
@@ -59,9 +65,21 @@ export async function fetchChainStatus(
   const nextEpochMs =
     Number.isFinite(start) && Number.isFinite(duration) ? start + duration : null
 
+  // u64 comes back as a numeric string; keep full precision as a bigint.
+  const stakeRaw = e?.systemState?.totalStake?.json
+  let totalStake: bigint | null = null
+  if (stakeRaw != null) {
+    try {
+      totalStake = BigInt(stakeRaw as string)
+    } catch {
+      totalStake = null
+    }
+  }
+
   return {
     epoch: e?.epochId ?? null,
     protocolVersion: e?.protocolConfigs?.protocolVersion ?? null,
     nextEpochMs,
+    totalStake,
   }
 }

@@ -409,6 +409,71 @@ export async function fetchDynamicFields(
   return mapPage(data.address?.dynamicFields, (n) => n)
 }
 
+// Some framework objects (0x8 Random, 0x9 Bridge) keep their real state in a
+// `Versioned`-wrapped value: the object has an `inner: Versioned` field, and that
+// Versioned holds the actual `*Inner` struct as its single dynamic field. This
+// resolves the nested value object's id in two hops — parent → `inner.id`
+// (the Versioned) → that Versioned's lone dynamic field. The id is fixed per
+// network, so callers hardcode the well-known networks and only resolve live for
+// the rest (devnet / custom). `null` when the object doesn't have this shape.
+export interface VersionedInner {
+  /** The inner value object's id — the `Versioned`'s single dynamic field. */
+  id: string
+  /** Its Move value type repr (e.g. `0x3::…::SuiSystemStateInnerV2`), or `null`. */
+  type: string | null
+}
+
+/**
+ * The inner value wrapped by a `0x2::versioned::Versioned` object: the actual
+ * `*Inner` struct, held as that Versioned's single dynamic field. One hop from the
+ * Versioned object's own id (the `id` of an object's `Versioned` field). Returns
+ * the field object's id + value type, or `null` when it has no such field. The id
+ * is fixed per network, so this is resolved live wherever the Versioned appears.
+ */
+export async function fetchVersionedInner(
+  network: Network,
+  versionedId: string,
+  signal?: AbortSignal,
+): Promise<VersionedInner | null> {
+  const { data } = await gqlRequest<{
+    address: {
+      dynamicFields: {
+        nodes: {
+          address: string
+          value:
+            | { __typename: 'MoveValue'; type: { repr: string } }
+            | { __typename: 'MoveObject'; contents: { type: { repr: string } } | null }
+        }[]
+      }
+    } | null
+  }>(
+    network,
+    `query VersionedInner($id: SuiAddress!) {
+      address(address: $id) {
+        dynamicFields(first: 1) {
+          nodes {
+            address
+            value {
+              __typename
+              ... on MoveValue { type { repr } }
+              ... on MoveObject { contents { type { repr } } }
+            }
+          }
+        }
+      }
+    }`,
+    { id: versionedId },
+    signal,
+  )
+  const node = data.address?.dynamicFields.nodes[0]
+  if (!node) return null
+  const type =
+    node.value.__typename === 'MoveValue'
+      ? node.value.type.repr
+      : (node.value.contents?.type.repr ?? null)
+  return { id: node.address, type }
+}
+
 // Sui GraphQL rejects any query over ~5000 bytes (and over 300 nodes). With each
 // id inlined (~120 bytes/selection), 30 aliased lookups stays safely under both —
 // so a large fan-out (e.g. a PTB with hundreds of object inputs) is split into

@@ -40,10 +40,10 @@ export function PackageView({ value }: { value: string }) {
         label="Package"
         value={value}
         meta={
-          <span className="flex flex-wrap items-center gap-3">
+          <>
             <LinkedHash value={packageId} />
             <MvrChip packageId={packageId} />
-          </span>
+          </>
         }
       />
 

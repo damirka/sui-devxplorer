@@ -73,7 +73,9 @@ export function PackageBody({
         />
       )}
 
-      <Balances id={data.address} hideWhenEmpty />
+      {/* Packages rarely hold coin balances — start collapsed and don't fetch
+          until the user opens the panel. */}
+      <Balances id={data.address} defaultOpen={false} />
       <OwnedObjects id={data.address} />
       <Txs
         id={data.address}

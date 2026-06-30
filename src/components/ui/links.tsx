@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { CopyButton } from './CopyButton'
+import { Hash } from './Hash'
 import { formatType } from '@/lib/format'
-import { truncateMiddle } from '@/lib/search'
 import { mvrNameForPackageCached } from '@/lib/mvr'
 import { useNetwork } from '@/context/useNetwork'
 
@@ -28,17 +28,48 @@ function useMvrName(packageId: string | null): string | null {
   return name
 }
 
-/** Build a `?search=` href for the current location, preserving other params.
- * Drops `version` by default — a pinned object version belongs to the id being
- * left, not the new entity. Pass a `version` to pin the target to it instead
- * (e.g. opening a dynamic object field's value at the version it holds). */
+/**
+ * Apply a new `?search=` to `current`, returning fresh params. Drops the pins
+ * that belong to the entity being left: `version` (a pinned object version),
+ * unless a new `version` is passed (e.g. opening a dynamic field's value at the
+ * version it holds), plus the validators-view deep-link params (`vtab`,
+ * `validator`, `view`). The single source of truth for "navigate to a new id",
+ * shared by {@link useSearchHref} and the search box.
+ */
+export function withSearch(
+  current: URLSearchParams,
+  value: string,
+  version?: number | null,
+): URLSearchParams {
+  const next = new URLSearchParams(current)
+  next.set('search', value)
+  if (version != null) next.set('version', String(version))
+  else next.delete('version')
+  next.delete('vtab')
+  next.delete('validator')
+  next.delete('view')
+  return next
+}
+
+/** Build a `?search=` href for the current location via {@link withSearch}. */
 export function useSearchHref() {
   const [params] = useSearchParams()
-  return (value: string, version?: number | null) => {
+  return (value: string, version?: number | null) =>
+    `?${withSearch(params, value, version).toString()}`
+}
+
+/** Href to the validators dashboard focused on one validator — it auto-scrolls
+ * to and opens that row (the same `?validator=` deep-link `ValidatorsView` builds
+ * for its own rows). Preserves network; drops the stale per-id pins. */
+export function useValidatorHref() {
+  const [params] = useSearchParams()
+  return (address: string) => {
     const next = new URLSearchParams(params)
-    next.set('search', value)
-    if (version != null) next.set('version', String(version))
-    else next.delete('version')
+    next.set('search', 'validators')
+    next.set('validator', address)
+    next.delete('version')
+    next.delete('vtab')
+    next.delete('view')
     return `?${next.toString()}`
   }
 }
@@ -88,21 +119,11 @@ export function linkifyMoveText(text: string): ReactNode[] {
   return out
 }
 
-/** A truncated, copyable identifier that links to its own page. */
+/** A truncated, copyable identifier that links to its own page — `Hash` with a
+ *  `to` set to the value's search href. */
 export function LinkedHash({ value }: { value: string }) {
   const searchHref = useSearchHref()
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <Link
-        to={searchHref(value)}
-        className="hash text-primary hover:underline"
-        title={value}
-      >
-        {truncateMiddle(value)}
-      </Link>
-      <CopyButton value={value} label="Copy" />
-    </span>
-  )
+  return <Hash value={value} to={searchHref(value)} />
 }
 
 /** A parsed Move type repr: a base (`pkg::mod::Name`, `vector`, or a primitive)

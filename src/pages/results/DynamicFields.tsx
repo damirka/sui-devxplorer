@@ -5,6 +5,8 @@ import { Pager, usePagedList } from '@/components/ui/Pager'
 import { DataList } from '@/components/ui/DataList'
 import { RowIndex } from '@/components/ui/RowIndex'
 import { HoverCard } from '@/components/ui/HoverCard'
+import { SkeletonLines } from '@/components/ui/Skeleton'
+import { Muted } from '@/components/ui/Field'
 import { useSearchHref } from '@/components/ui/links'
 import { truncateMiddle } from '@/lib/search'
 import { formatType } from '@/lib/format'
@@ -13,8 +15,16 @@ import { useAsync } from '@/lib/useAsync'
 import {
   fetchDynamicFields,
   fetchObjectTypes,
+  fetchVersionedInner,
   type DynamicFieldNode,
 } from '@/lib/object'
+
+/** A `0x2::versioned::Versioned` field detected on a parent object: the wrapped
+ *  Versioned object's id + version. Drives the inner-value fallback below. */
+export interface VersionedRef {
+  versionedId: string
+  version: string | null
+}
 
 // A derived object is stored under a dynamic field keyed by
 // `0x2::derived_object::Claimed { pos0: ID }` — `pos0` is the derived object's
@@ -49,11 +59,16 @@ function rowFor(df: DynamicFieldNode): { target: string; derived: string | null 
 export function DynamicFields({
   id,
   hideWhenEmpty = false,
+  versioned = null,
 }: {
   id: string
   /** Render nothing once the fetch resolves with no fields (used where the
    * panel would otherwise just be noise, e.g. plain account addresses). */
   hideWhenEmpty?: boolean
+  /** When the object has a `Versioned` field and *no* dynamic fields of its own,
+   * surface that wrapped inner value (its version + a link to it) in place of the
+   * empty panel — the generalised Random/Bridge inner-state shortcut. */
+  versioned?: VersionedRef | null
 }) {
   const { network } = useNetwork()
   const searchHref = useSearchHref()
@@ -74,8 +89,11 @@ export function DynamicFields({
     [network, derivedIds],
   )
 
-  if (hideWhenEmpty && !loading && !error && items.length === 0) {
-    return null
+  if (!loading && !error && items.length === 0) {
+    // No dynamic fields: if the object wraps its state in a Versioned, show that
+    // inner value instead of the empty panel; otherwise honour `hideWhenEmpty`.
+    if (versioned) return <VersionedInnerPanel versioned={versioned} />
+    if (hideWhenEmpty) return null
   }
 
   return (
@@ -175,6 +193,57 @@ export function DynamicFields({
             )
           }}
         </DataList>
+      </PanelSection>
+    </Panel>
+  )
+}
+
+/** Shown in place of the (empty) dynamic-fields panel for an object that wraps
+ *  its state in a `0x2::versioned::Versioned`: the version, and a link straight to
+ *  the wrapped inner value object (labelled with its type), where its fields
+ *  render in full. Generalises the Random (0x8) / Bridge (0x9) inner-state path. */
+function VersionedInnerPanel({ versioned }: { versioned: VersionedRef }) {
+  const { network } = useNetwork()
+  const searchHref = useSearchHref()
+  const { data: inner, loading } = useAsync(
+    (signal) => fetchVersionedInner(network, versioned.versionedId, signal),
+    [network, versioned.versionedId],
+  )
+  return (
+    <Panel>
+      <PanelSection
+        label="Versioned state"
+        action={
+          versioned.version != null ? (
+            <span className="text-muted font-mono text-xs" title="versioned wrapper version">
+              v{versioned.version}
+            </span>
+          ) : undefined
+        }
+      >
+        <p className="text-muted mb-3 text-xs leading-relaxed">
+          No dynamic fields of its own — this object holds its state in a{' '}
+          <span className="text-text">0x2::versioned::Versioned</span> wrapper. The
+          current value:
+        </p>
+        {loading ? (
+          <SkeletonLines count={1} />
+        ) : inner ? (
+          <Link
+            to={searchHref(inner.id)}
+            title={`open ${inner.id}`}
+            className="hover:bg-surface-2 group -mx-2 flex items-center gap-2 px-2 py-2.5 font-mono text-xs transition-colors"
+          >
+            <span className="text-primary group-hover:underline">
+              {inner.type ? formatType(inner.type) : 'inner value'}
+            </span>
+            <span className="hash text-muted ml-auto shrink-0 truncate" title={inner.id}>
+              {truncateMiddle(inner.id)}
+            </span>
+          </Link>
+        ) : (
+          <Muted>could not resolve the inner value.</Muted>
+        )}
       </PanelSection>
     </Panel>
   )

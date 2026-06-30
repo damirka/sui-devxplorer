@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { AtSign, Coins, Images, KeyRound, Loader2, Package, Stamp, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { AtSign, Coins, Images, KeyRound, Loader2, Lock, Package, Stamp, X } from 'lucide-react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Pager, usePagedList } from '@/components/ui/Pager'
 import { DataList } from '@/components/ui/DataList'
@@ -9,7 +10,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorText } from '@/components/ui/ErrorText'
 import { Badge } from '@/components/ui/Badge'
 import { CoinIcon } from '@/components/ui/CoinIcon'
-import { LinkedHash, TypeLink } from '@/components/ui/links'
+import { LinkedHash, TypeLink, useValidatorHref } from '@/components/ui/links'
 import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
 import {
@@ -27,8 +28,11 @@ import {
   type CoinMeta,
 } from '@/lib/coin'
 import { resolveMvrType } from '@/lib/mvr'
+import { fetchOwnedSuinsNames, type OwnedSuinsName } from '@/lib/suins'
+import { fetchOwnedStakedSui, isStakedSuiType, type OwnedStakedSui } from '@/lib/staking'
+import { fetchValidatorPools, type ValidatorRef } from '@/lib/validators'
 import { isUpgradeCapType } from '@/lib/upgradeCap'
-import { formatType, formatTokenAmount } from '@/lib/format'
+import { formatSui, formatType, formatTokenAmount } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import type { Network } from '@/context/network-context'
 import {
@@ -111,6 +115,7 @@ type Filter =
   | { kind: 'coins' }
   | { kind: 'displays' }
   | { kind: 'publishers' }
+  | { kind: 'staked' }
   | null
 
 /** Collapse whitespace and clamp to `max` chars with an ellipsis — keeps a
@@ -118,6 +123,17 @@ type Filter =
 function clampText(s: string, max: number): string {
   const t = s.replace(/\s+/g, ' ').trim()
   return t.length > max ? t.slice(0, max - 1).trimEnd() + '…' : t
+}
+
+/** A SuiNS name's expiry as a short date + whether it's already past. */
+function suinsExpiry(ms: number | null): { text: string; expired: boolean } {
+  if (ms == null) return { text: '—', expired: false }
+  const text = new Date(ms).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+  })
+  return { text, expired: ms < Date.now() }
 }
 
 export function OwnedObjects({ id }: { id: string }) {
@@ -160,6 +176,9 @@ export function OwnedObjects({ id }: { id: string }) {
         }
         onSelectPublishers={() =>
           setFilter((f) => (f?.kind === 'publishers' ? null : { kind: 'publishers' }))
+        }
+        onSelectStaked={() =>
+          setFilter((f) => (f?.kind === 'staked' ? null : { kind: 'staked' }))
         }
       />
       <OwnedList
@@ -282,6 +301,42 @@ function OwnedScanRow({
       {trailing}
     </li>
   )
+}
+
+/** A stake's validator: the name linked to the validators dashboard once the
+ *  pool → validator map resolves, else the raw pool id as an object link — for
+ *  stakes whose pool isn't in the active set, or until the map loads. */
+function StakeValidator({
+  validator,
+  poolId,
+  href,
+}: {
+  validator: ValidatorRef | null
+  poolId: string | null
+  href: (address: string) => string
+}) {
+  if (validator) {
+    return (
+      <Link
+        to={href(validator.address)}
+        title={`staked with ${validator.name} — view validator`}
+        className="text-primary min-w-0 truncate hover:underline"
+      >
+        {validator.name}
+      </Link>
+    )
+  }
+  if (poolId) {
+    return (
+      <span
+        className="text-muted inline-flex min-w-0 items-center gap-1.5"
+        title="staking pool"
+      >
+        pool <LinkedHash value={poolId} />
+      </span>
+    )
+  }
+  return null
 }
 
 /** A coin object's value as the row's trailing chip: its icon + the formatted
@@ -410,13 +465,48 @@ function OwnedList({
   const showCoins = filter?.kind === 'coins'
   const showDisplays = filter?.kind === 'displays'
   const showPublishers = filter?.kind === 'publishers'
+  const showStaked = filter?.kind === 'staked'
   const typeFilter = filter?.kind === 'type' ? filter.type : null
   // UpgradeCaps get the richer cap formatting (governed package + policy) used
   // by the "UpgradeCaps held" panel — a different fetch (it needs contents.json).
   const caps = !!typeFilter && isUpgradeCapType(typeFilter)
+  // The SuiNS-names view fetches the full set with each name's expiry and sorts
+  // it (soonest first), so it owns its own fetch rather than the paged one below.
+  const suinsFilter = !!typeFilter && isSuinsType(typeFilter)
   // Capabilities / coins / displays come straight from the in-memory ownership
-  // scan; only the type-filtered, cap, and publisher views hit the server.
-  const fetched = !!typeFilter || showPublishers
+  // scan; only the (non-suins) type-filtered, cap, and publisher views hit the
+  // shared paged fetch.
+  const fetched = (!!typeFilter && !suinsFilter) || showPublishers
+
+  // SuiNS names — all of them, with expiry, sorted ascending. Disabled (empty)
+  // unless the suins filter is active.
+  const suinsNames = useAsync(
+    (signal) =>
+      suinsFilter && typeFilter
+        ? fetchOwnedSuinsNames(network, id, typeFilter, signal)
+        : Promise.resolve<OwnedSuinsName[]>([]),
+    [network, id, typeFilter, suinsFilter],
+  )
+
+  // StakedSui receipts — the full set with pool + principal, largest first. Its
+  // own fetch (it needs each object's contents), enabled only when active.
+  const staked = useAsync(
+    (signal) =>
+      showStaked
+        ? fetchOwnedStakedSui(network, id, signal)
+        : Promise.resolve<OwnedStakedSui[]>([]),
+    [network, id, showStaked],
+  )
+  // Lean pool → validator lookup, so each stake names the validator it's with
+  // (rather than a raw pool id). Loads in parallel; rows fall back to the pool id
+  // for stakes whose pool isn't in the active set (or until this resolves).
+  const validatorPools = useAsync(
+    (signal) =>
+      showStaked ? fetchValidatorPools(network, signal) : Promise.resolve(null),
+    [network, showStaked],
+  )
+  const poolToValidator = validatorPools.data
+  const validatorHref = useValidatorHref()
 
   // One paginated fetch, switched by the active view. The pager key carries the
   // view, so switching filters resets pagination (and clears the prior result,
@@ -476,7 +566,11 @@ function OwnedList({
         ? 'Displays'
         : showPublishers
           ? 'Publishers'
-          : 'Owned objects'
+          : showStaked
+            ? 'Staked SUI'
+            : suinsFilter
+              ? 'SuiNS names'
+              : 'Owned objects'
 
   // Row count shown for the in-memory views; the pager drives the fetched ones.
   const scanCount = showCaps
@@ -497,7 +591,9 @@ function OwnedList({
         ? 'coins'
         : showDisplays
           ? 'displays'
-          : 'publishers'
+          : showStaked
+            ? 'staked sui'
+            : 'publishers'
   const chipTitle = typeFilter ?? chipLabel
 
   return (
@@ -507,6 +603,14 @@ function OwnedList({
         action={
           fetched ? (
             list.paged ? <Pager {...list.pagerProps} label="objects" /> : undefined
+          ) : suinsFilter ? (
+            <span className="text-muted font-mono text-xs">
+              {(suinsNames.data ?? []).length}
+            </span>
+          ) : showStaked ? (
+            <span className="text-muted font-mono text-xs">
+              {(staked.data ?? []).length}
+            </span>
           ) : scanCount != null ? (
             <span className="text-muted font-mono text-xs">{scanCount}</span>
           ) : undefined
@@ -611,6 +715,69 @@ function OwnedList({
                     )}
                   </li>
                 )}
+              </DataList>
+            ) : showStaked ? (
+              <DataList
+                loading={staked.loading}
+                error={staked.error}
+                items={staked.data ?? []}
+                empty="no staked SUI held."
+                scroll
+              >
+                {(s, i) => {
+                  const validator = s.poolId ? poolToValidator?.get(s.poolId) : null
+                  return (
+                    <li
+                      key={s.address}
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5"
+                    >
+                      <RowIndex n={i + 1} />
+                      <LinkedHash value={s.address} />
+                      <Badge className="shrink-0">staked sui</Badge>
+                      <StakeValidator
+                        validator={validator ?? null}
+                        poolId={s.poolId}
+                        href={validatorHref}
+                      />
+                      <span
+                        className="text-text ml-auto shrink-0 tabular-nums"
+                        title="principal staked"
+                      >
+                        {formatSui(s.principal)}
+                      </span>
+                    </li>
+                  )
+                }}
+              </DataList>
+            ) : suinsFilter ? (
+              <DataList
+                loading={suinsNames.loading}
+                error={suinsNames.error}
+                items={suinsNames.data ?? []}
+                empty="no suins names held."
+                scroll
+              >
+                {(o, i) => {
+                  const e = suinsExpiry(o.expirationMs)
+                  return (
+                    <li key={o.address} className="flex items-center gap-3 py-2.5">
+                      <RowIndex n={i + 1} />
+                      <LinkedHash value={o.address} />
+                      {o.domain && (
+                        <span className="text-text min-w-0 truncate">{o.domain}</span>
+                      )}
+                      <span
+                        className={cn(
+                          'ml-auto shrink-0 tabular-nums',
+                          e.expired ? 'text-danger' : 'text-muted',
+                        )}
+                        title={e.expired ? 'expired' : 'expiration date'}
+                      >
+                        {e.expired ? `expired ${e.text}` : e.text}
+                      </span>
+                    </li>
+                  )
+                }}
               </DataList>
             ) : caps ? (
               <DataList
@@ -800,6 +967,7 @@ function TypesOwned({
   onSelectCoins,
   onSelectDisplays,
   onSelectPublishers,
+  onSelectStaked,
 }: {
   scan: OwnedScan
   filter: Filter
@@ -810,6 +978,7 @@ function TypesOwned({
   onSelectCoins: () => void
   onSelectDisplays: () => void
   onSelectPublishers: () => void
+  onSelectStaked: () => void
 }) {
   const { types, caps, coins, displays, total, done, capped, error, loadAll } = scan
   const [filterText, setFilterText] = useState('')
@@ -825,6 +994,11 @@ function TypesOwned({
   // count them from the scan's type breakdown.
   const publisherCount = types
     .filter((t) => isPublisherType(t.type))
+    .reduce((sum, t) => sum + t.count, 0)
+  // StakedSui receipts — a single concrete type (0x3 is universal), counted from
+  // the scan; the filter opens a dedicated view (pool + principal per stake).
+  const stakedCount = types
+    .filter((t) => isStakedSuiType(t.type))
     .reduce((sum, t) => sum + t.count, 0)
   // MVR packages are AppCap objects — one per registered Move Registry app name.
   // A single concrete type, so (like suins names) the filter just selects it; use
@@ -862,6 +1036,7 @@ function TypesOwned({
               suinsCount > 0 ||
               mvrCount > 0 ||
               publisherCount > 0 ||
+              stakedCount > 0 ||
               displays.length > 0 ||
               caps.length > 0) && (
               <div className="mb-3 flex flex-col gap-2">
@@ -903,6 +1078,16 @@ function TypesOwned({
                     active={filter?.kind === 'publishers'}
                     onClick={onSelectPublishers}
                     title="all 0x2::package::Publisher objects owned here"
+                  />
+                )}
+                {stakedCount > 0 && (
+                  <QuickFilter
+                    icon={<Lock size={13} />}
+                    label="staked sui"
+                    count={stakedCount}
+                    active={filter?.kind === 'staked'}
+                    onClick={onSelectStaked}
+                    title="all 0x3::staking_pool::StakedSui objects owned here"
                   />
                 )}
                 {displays.length > 0 && (

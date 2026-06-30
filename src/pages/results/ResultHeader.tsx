@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Badge } from '@/components/ui/Badge'
+import { Badge, BadgeRow } from '@/components/ui/Badge'
 import { Hash } from '@/components/ui/Hash'
 import type { SearchKind } from '@/lib/search'
 
@@ -20,10 +20,10 @@ export function ResultHeader({
 }) {
   return (
     <div className="mb-6 flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-3">
+      <BadgeRow>
         <Badge kind={kind}>{label}</Badge>
         {meta}
-      </div>
+      </BadgeRow>
       <div className="border-line bg-surface flex items-center gap-2.5 border px-3 py-2.5">
         <span aria-hidden className="text-primary shrink-0 select-none">
           ❯
