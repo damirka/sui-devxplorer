@@ -19,6 +19,9 @@ interface SearchBarProps {
    *  teach the box's grammar, and a live echo of what the current input
    *  resolves to — surfaced on focus, while typing, and on paste. */
   hints?: boolean
+  /** Fired after a typed search runs (the box navigates). Lets a host — e.g. the
+   *  mobile search modal — dismiss itself once the query is submitted. */
+  onNavigate?: () => void
 }
 
 const HERO_TEXT = 'font-mono text-2xl font-medium tracking-tight sm:text-3xl'
@@ -59,7 +62,7 @@ const KIND_LABEL: Partial<Record<SearchKind, string>> = {
  * `hero` renders as a large terminal prompt that IS the input, with a custom
  * chunky block caret; `compact` is the boxed field used in the header.
  */
-export function SearchBar({ variant = 'hero', autoFocus, hints }: SearchBarProps) {
+export function SearchBar({ variant = 'hero', autoFocus, hints, onNavigate }: SearchBarProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [value, setValue] = useState('')
   const [focused, setFocused] = useState(false)
@@ -145,8 +148,9 @@ export function SearchBar({ variant = 'hero', autoFocus, hints }: SearchBarProps
       setSearchParams((prev) => withSearch(prev, v))
       setValue('')
       inputRef.current?.blur()
+      onNavigate?.()
     },
-    [setSearchParams],
+    [setSearchParams, onNavigate],
   )
 
   function submit(e: FormEvent) {
@@ -321,7 +325,10 @@ export function SearchBar({ variant = 'hero', autoFocus, hints }: SearchBarProps
               ) : (
                 <span className="text-muted">
                   <Caret on={focused} />
-                  search pkgs, txs, objects on sui
+                  {/* Full grammar hint on desktop; a short label on mobile, where
+                      the long string overruns the viewport at this type size. */}
+                  <span className="sm:hidden">search sui network</span>
+                  <span className="hidden sm:inline">search pkgs, txs, objects on sui</span>
                 </span>
               )}
             </div>

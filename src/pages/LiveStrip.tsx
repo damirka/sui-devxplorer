@@ -65,10 +65,11 @@ export function LiveStrip() {
   ].filter(Boolean)
 
   // Mobile gets a single quiet grey line instead of the full phosphor bar (which
-  // would wrap into a cluttered three-line block on a narrow screen).
+  // would wrap into a cluttered three-line block on a narrow screen). Just the
+  // climbing checkpoint (the live pulse) and the next-epoch countdown — dropping
+  // the epoch number, which pushed the countdown off the edge on a narrow screen.
   const mobileLine = [
     `#${head.sequenceNumber.toLocaleString()}`,
-    epoch != null ? `epoch ${epoch.toLocaleString()}` : null,
     nextLabel != null ? `next ${nextLabel}` : null,
   ]
     .filter(Boolean)
