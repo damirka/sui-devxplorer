@@ -30,21 +30,35 @@ const SUI_ICON_URL =
  * repr → metadata; coins with no registered `CoinMetadata` are simply absent,
  * so the caller can fall back to the raw amount.
  */
+// Coin metadata (decimals / symbol / icon) is immutable, so cache resolved entries
+// for the session keyed by `network|coinType`. SUI, USDC, etc. are then looked up
+// once and reused across every tx / balance / owned-objects view, not re-fetched
+// per surface. Only positive hits are cached (unregistered coins stay cheap to
+// recheck); cleared on reload.
+const coinMetaCache = new Map<string, CoinMeta>()
+const coinMetaKey = (network: Network, type: string) => `${network}|${type}`
+
 export async function fetchCoinMetadata(
   network: Network,
   coinTypes: string[],
   signal?: AbortSignal,
 ): Promise<Map<string, CoinMeta>> {
   const out = new Map<string, CoinMeta>()
-  const types = [...new Set(coinTypes)]
-  if (types.length === 0) return out
+  // Serve cached hits; fetch only the misses.
+  const missing: string[] = []
+  for (const t of [...new Set(coinTypes)]) {
+    const hit = coinMetaCache.get(coinMetaKey(network, t))
+    if (hit) out.set(t, hit)
+    else missing.push(t)
+  }
+  if (missing.length === 0) return out
 
-  const varDecls = types.map((_, i) => `$c${i}: String!`).join(', ')
-  const selections = types
+  const varDecls = missing.map((_, i) => `$c${i}: String!`).join(', ')
+  const selections = missing
     .map((_, i) => `m${i}: coinMetadata(coinType: $c${i}) { decimals symbol iconUrl }`)
     .join('\n')
   const variables: Record<string, string> = {}
-  types.forEach((t, i) => {
+  missing.forEach((t, i) => {
     variables[`c${i}`] = t
   })
 
@@ -55,14 +69,16 @@ export async function fetchCoinMetadata(
     >
   >(network, `query CoinMeta(${varDecls}) {\n${selections}\n}`, variables, signal)
 
-  types.forEach((t, i) => {
+  missing.forEach((t, i) => {
     const m = data[`m${i}`]
     if (m && m.decimals != null) {
-      out.set(t, {
+      const meta: CoinMeta = {
         decimals: m.decimals,
         symbol: m.symbol ?? '',
         iconUrl: SUI_TYPE_RE.test(t) ? SUI_ICON_URL : m.iconUrl?.trim() || undefined,
-      })
+      }
+      out.set(t, meta)
+      coinMetaCache.set(coinMetaKey(network, t), meta)
     }
   })
   return out

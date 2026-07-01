@@ -15,12 +15,25 @@ export function ObjectOverview({
   data,
   type,
   isPackage = false,
+  createdTx,
+  deletedTx,
 }: {
   data: SuiObject
   type?: ReactNode
   isPackage?: boolean
+  /** The tx that created the object (its first version). Renders a "Created tx"
+   *  field; `null` shows `—`. Omit to hide the field entirely. */
+  createdTx?: string | null
+  /** The tx that removed the object. Renders a "Deleted tx" field — pass only for
+   *  a deleted object; `null` (removal tx pruned) shows `—`. Omit to hide it. */
+  deletedTx?: string | null
 }) {
   const owner = describeOwner(data.owner)
+  const prevTx = data.previousTransaction?.digest ?? null
+  // The producing tx of the current version. For a never-mutated object it *is*
+  // the creating tx — when a `createdTx` is given and equal, show it once (as
+  // "created") rather than duplicating the row.
+  const showPrev = prevTx != null && prevTx !== createdTx
 
   // A package has only three relevant fields — lay them out as compact
   // one-line `LABEL value` rows that wrap, instead of the tall label-above grid.
@@ -76,13 +89,21 @@ export function ObjectOverview({
               {data.storageRebate ? ' MIST' : ''}
             </span>
           </Field>
-          <Field label="Previous tx">
-            {data.previousTransaction ? (
-              <LinkedHash value={data.previousTransaction.digest} />
-            ) : (
-              <Muted>—</Muted>
-            )}
-          </Field>
+          {createdTx !== undefined && (
+            <Field label="Created tx">
+              {createdTx ? <LinkedHash value={createdTx} /> : <Muted>—</Muted>}
+            </Field>
+          )}
+          {showPrev && (
+            <Field label="Previous tx">
+              <LinkedHash value={prevTx} />
+            </Field>
+          )}
+          {deletedTx !== undefined && (
+            <Field label="Deleted tx">
+              {deletedTx ? <LinkedHash value={deletedTx} /> : <Muted>—</Muted>}
+            </Field>
+          )}
           <Field label="Digest">
             {data.digest ? <Hash value={data.digest} copy /> : <Muted>—</Muted>}
           </Field>

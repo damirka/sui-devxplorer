@@ -1040,6 +1040,137 @@ export async function fetchTransactions(
   }))
 }
 
+/* ─────────────────────── object removal (deletion) ─────────────────────── */
+
+/** The transaction that removed an object from the live set. */
+export interface ObjectRemoval {
+  digest: string
+  timestamp: string | null
+  /** It *deleted* the object (vs. wrapped it into a parent / otherwise removed). */
+  deleted: boolean
+  /** Sender / status / net gas of the removing tx — populated by the single-object
+   *  {@link fetchObjectRemovalTx} so it can render as a full tx row; the batched
+   *  {@link fetchObjectRemovals} (deletion markers only) leaves them undefined. */
+  sender?: string | null
+  status?: string | null
+  gas?: bigint | null
+}
+
+// The last transaction to affect an object is, for an object that's now gone,
+// the one that removed it — nothing can touch an object after it's deleted or
+// wrapped. `affectedObject` captures deletes, so `last: 1` is that removal tx.
+// `objectChanges` on it tells deletion apart from wrapping (idDeleted).
+const OBJECT_REMOVAL_QUERY = `
+query ObjectRemoval($id: SuiAddress!) {
+  transactions(last: 1, filter: { affectedObject: $id }) {
+    nodes {
+      digest
+      sender { address }
+      effects {
+        status
+        timestamp
+        gasEffects { gasSummary { computationCost storageCost storageRebate } }
+        objectChanges(first: 50) { nodes { address idDeleted } }
+      }
+    }
+  }
+}
+`
+
+/**
+ * Find the transaction that removed a now-gone object — the last one to affect
+ * it. Returns `null` when the object has no affecting transactions in the index:
+ * for a known-deleted object that means its tx history has aged out of the
+ * endpoint's `affectedObject` retention window, so the removing tx can't be
+ * looked up here (only recent removals are recoverable).
+ */
+export async function fetchObjectRemovalTx(
+  network: Network,
+  id: string,
+  signal?: AbortSignal,
+): Promise<ObjectRemoval | null> {
+  const { data } = await gqlRequest<{
+    transactions: {
+      nodes: {
+        digest: string
+        sender: { address: string } | null
+        effects: {
+          status: string | null
+          timestamp: string | null
+          gasEffects: { gasSummary: GasSummary | null } | null
+          objectChanges: { nodes: { address: string; idDeleted: boolean | null }[] }
+        } | null
+      }[]
+    }
+  }>(network, OBJECT_REMOVAL_QUERY, { id }, signal)
+  const n = data.transactions.nodes[0]
+  if (!n) return null
+  const deleted = (n.effects?.objectChanges.nodes ?? []).some(
+    (c) => c.address === id && !!c.idDeleted,
+  )
+  return {
+    digest: n.digest,
+    timestamp: n.effects?.timestamp ?? null,
+    deleted,
+    sender: n.sender?.address ?? null,
+    status: n.effects?.status ?? null,
+    gas: netGasUsed(n.effects?.gasEffects?.gasSummary),
+  }
+}
+
+// Sui caps a request's "dedicated store" sub-queries; each aliased `transactions`
+// + its nested `objectChanges` is heavy, so resolve ≤10 removals per request.
+const REMOVAL_CHUNK = 10
+
+/**
+ * Which of `ids` have since been *deleted* (not just mutated), mapped to the
+ * transaction that deleted each. Batched aliased lookups of each object's last
+ * affecting tx (see {@link fetchObjectRemovalTx}); non-deleted ids are omitted.
+ * Ids come from on-chain object changes (validated hex) so they inline safely.
+ */
+export async function fetchObjectRemovals(
+  network: Network,
+  ids: string[],
+  signal?: AbortSignal,
+): Promise<Map<string, ObjectRemoval>> {
+  const out = new Map<string, ObjectRemoval>()
+  const unique = [...new Set(ids)]
+  for (let i = 0; i < unique.length; i += REMOVAL_CHUNK) {
+    const chunk = unique.slice(i, i + REMOVAL_CHUNK)
+    const selections = chunk
+      .map(
+        (id, j) =>
+          `t${j}: transactions(last: 1, filter: { affectedObject: "${id}" }) { nodes { digest effects { timestamp objectChanges(first: 50) { nodes { address idDeleted } } } } }`,
+      )
+      .join('\n')
+    const { data } = await gqlRequest<
+      Record<
+        string,
+        {
+          nodes: {
+            digest: string
+            effects: {
+              timestamp: string | null
+              objectChanges: { nodes: { address: string; idDeleted: boolean | null }[] }
+            } | null
+          }[]
+        }
+      >
+    >(network, `query ObjectRemovals {\n${selections}\n}`, {}, signal)
+    chunk.forEach((id, j) => {
+      const n = data[`t${j}`]?.nodes[0]
+      if (!n) return
+      const deleted = (n.effects?.objectChanges.nodes ?? []).some(
+        (c) => c.address === id && !!c.idDeleted,
+      )
+      if (deleted) {
+        out.set(id, { digest: n.digest, timestamp: n.effects?.timestamp ?? null, deleted: true })
+      }
+    })
+  }
+  return out
+}
+
 /* ───────────────────────────── signer scheme ───────────────────────────── */
 
 // A Sui address carries no on-chain marker for *how* it signs — it's just a

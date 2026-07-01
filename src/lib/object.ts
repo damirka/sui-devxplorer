@@ -143,6 +143,73 @@ export async function fetchObject(
   return { object: data.object, displayError }
 }
 
+// The producing tx of an object's first (oldest) version = the tx that created
+// it. `first: 1` returns that oldest version directly.
+const CREATION_TX_QUERY = `
+query CreationTx($id: SuiAddress!) {
+  objectVersions(address: $id, first: 1) {
+    nodes { previousTransaction { digest } }
+  }
+}
+`
+
+/** The digest of the transaction that created an object, or `null` when it can't
+ *  be determined (e.g. the genesis version has been pruned). */
+export async function fetchCreationTx(
+  network: Network,
+  id: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const { data } = await gqlRequest<{
+    objectVersions: { nodes: { previousTransaction: { digest: string } | null }[] }
+  }>(network, CREATION_TX_QUERY, { id }, signal)
+  return data.objectVersions.nodes[0]?.previousTransaction?.digest ?? null
+}
+
+/** An object's version bounds, in ONE round-trip: whether it has any on-chain
+ *  version at all (existence), its latest version, and its creating tx. Used to
+ *  classify a null-`object()` id (a deleted / wrapped object vs. a plain account
+ *  address) and recover its last-known state — instead of two separate first/last
+ *  `objectVersions` queries. */
+export interface ObjectBounds {
+  /** The id has ≥1 on-chain version — i.e. it was (or is, wrapped) an object. */
+  exists: boolean
+  /** Latest version, to pin the last-known-state snapshot. `null` when none. */
+  lastVersion: number | null
+  /** The tx that created it (its first version's producing tx). */
+  createdTx: string | null
+}
+
+// One aliased query for both ends of the version connection — a minimal node
+// selection (no owner/effects/gas payload the callers don't read here).
+const OBJECT_BOUNDS_QUERY = `
+query ObjectBounds($id: SuiAddress!) {
+  first: objectVersions(address: $id, first: 1) {
+    nodes { previousTransaction { digest } }
+  }
+  last: objectVersions(address: $id, last: 1) {
+    nodes { version }
+  }
+}
+`
+
+export async function fetchObjectBounds(
+  network: Network,
+  id: string,
+  signal?: AbortSignal,
+): Promise<ObjectBounds> {
+  const { data } = await gqlRequest<{
+    first: { nodes: { previousTransaction: { digest: string } | null }[] }
+    last: { nodes: { version: number }[] }
+  }>(network, OBJECT_BOUNDS_QUERY, { id }, signal)
+  const last = data.last.nodes[0]
+  return {
+    exists: !!last,
+    lastVersion: last?.version ?? null,
+    createdTx: data.first.nodes[0]?.previousTransaction?.digest ?? null,
+  }
+}
+
 // An object's full version history. Queried newest-first via `last`/`before`:
 // the service returns each page ascending, so we reverse it for display and page
 // "back in time" by passing the previous page's `startCursor` as `before`.

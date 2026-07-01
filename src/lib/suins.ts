@@ -57,6 +57,21 @@ export async function fetchDefaultSuinsName(
   return data.address?.defaultNameRecord?.domain ?? null
 }
 
+/**
+ * The SuiNS registration NFT, as a Move Registry *type* name. Pinned to `/1`
+ * because `SuinsRegistration` is defined in SuiNS Core V1 — the unversioned
+ * `@suins/core` is a facade the type filter wouldn't match. Resolve it through
+ * `resolveMvrType` for the network's actual on-chain type.
+ */
+export const SUINS_REGISTRATION_MVR = '@suins/core/1::suins_registration::SuinsRegistration'
+
+/** Does a type repr name a SuiNS registration? Matched by `module::struct`, so the
+ *  per-network / upgraded package id still counts. A cheap gate before the strict
+ *  MVR-resolved equality check (which is the actual verdict). */
+export function isSuinsType(repr: string | null | undefined): boolean {
+  return !!repr && /::suins_registration::SuinsRegistration$/.test(repr)
+}
+
 /** Display a domain in `@handle` form, idempotent across input shapes:
  * `0x2.sui` / `@0x2` / `0x2` → `@0x2`. */
 export function atName(domain: string): string {

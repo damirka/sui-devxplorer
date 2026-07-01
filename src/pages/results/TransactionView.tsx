@@ -32,6 +32,7 @@ import {
 import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
 import { netGasUsed } from '@/lib/gas'
+import { fetchObjectTypes } from '@/lib/object'
 import { reverseResolveMvrBulk, mvrAppUrl } from '@/lib/mvr'
 import { ObjectChangeDiff } from './ObjectChangeDiff'
 import {
@@ -42,11 +43,13 @@ import {
   failedInstructionOffset,
   inputType,
   addressLikeArity,
+  fetchObjectRemovals,
   type SuiTransaction,
   type TxInput,
   type TxCommand,
   type TxArgument,
   type ObjectChangeNode,
+  type ObjectRemoval,
   type MoveFn,
 } from '@/lib/transaction'
 import { fetchCoinMetadata, type CoinMeta } from '@/lib/coin'
@@ -1096,11 +1099,18 @@ function ProgramCode({ code }: { code: string }) {
 const DF_TYPE_RE = /^0x0*2::dynamic_(?:object_)?field::Field(?:<|$)/
 
 /** A change's Move type — from the output state, or the input state for a
- * deleted object (whose output state is gone). `null` for packages / unknown. */
-function changeType(n: ObjectChangeNode): string | null {
+ * deleted object (whose output state is gone). When both are pruned (an old tx
+ * whose object's intermediate versions the node no longer retains), fall back to
+ * the object's *current* type from `resolved` — a Move object's type never
+ * changes. `null` for packages / unknown. */
+function changeType(
+  n: ObjectChangeNode,
+  resolved?: Map<string, string | null>,
+): string | null {
   return (
     n.outputState?.asMoveObject?.contents?.type.repr ??
     n.inputState?.asMoveObject?.contents?.type.repr ??
+    resolved?.get(n.address) ??
     null
   )
 }
@@ -1119,6 +1129,36 @@ function ObjectChanges({
 }) {
   const { network } = useNetwork()
   const nodes = fx.objectChanges.nodes
+
+  // Some changes carry no type because both their input and output state have
+  // been pruned (a created-then-mutated or wrapped object in an older tx, whose
+  // intermediate versions the node no longer retains). A Move object's type is
+  // immutable, so recover it from the object's current type in one bulk by-id
+  // lookup, and feed it to `changeType` as a fallback.
+  const untypedIds = nodes
+    .filter((n) => !n.outputState?.asMovePackage && changeType(n) == null)
+    .map((n) => n.address)
+  const { data: resolvedTypes } = useAsync(
+    (signal) =>
+      untypedIds.length
+        ? fetchObjectTypes(network, untypedIds, signal)
+        : Promise.resolve<Map<string, string | null>>(new Map()),
+    [network, untypedIds.join(',')],
+  )
+
+  // Objects this tx *created* that have since been deleted — so a created row can
+  // say where the object ended up ("deleted in ⟨tx⟩"). Scoped to created objects
+  // (the "where did my new object go" case) to bound the batched lookup.
+  const createdIds = nodes
+    .filter((n) => n.idCreated && !n.idDeleted && !n.outputState?.asMovePackage)
+    .map((n) => n.address)
+  const { data: removals } = useAsync(
+    (signal) =>
+      createdIds.length
+        ? fetchObjectRemovals(network, createdIds, signal)
+        : Promise.resolve<Map<string, ObjectRemoval>>(new Map()),
+    [network, createdIds.join(',')],
+  )
 
   // A failed transaction reverts every object change except the gas coin, so
   // there's no contents diff to show — disable the per-object diff (pass no
@@ -1176,6 +1216,8 @@ function ObjectChanges({
           <ObjectChangeList
             nodes={showDf ? dfNodes : objNodes}
             mvrNames={mvrNames}
+            resolvedTypes={resolvedTypes ?? undefined}
+            removals={removals ?? undefined}
             txDigest={diffDigest}
             empty={showDf ? 'no dynamic field changes.' : 'no object changes.'}
           />
@@ -1189,11 +1231,17 @@ function ObjectChanges({
 function ObjectChangeList({
   nodes,
   mvrNames,
+  resolvedTypes,
+  removals,
   txDigest,
   empty,
 }: {
   nodes: ObjectChangeNode[]
   mvrNames: Record<string, string>
+  /** Fallback types resolved by id for changes whose state was pruned. */
+  resolvedTypes?: Map<string, string | null>
+  /** Created objects since deleted: id → the tx that deleted it. */
+  removals?: Map<string, ObjectRemoval>
   txDigest: string | null
   empty: string
 }) {
@@ -1203,16 +1251,31 @@ function ObjectChangeList({
   const mutated = nodes.filter((n) => !n.idCreated && !n.idDeleted)
   return (
     <div className="space-y-4">
-      <ObjectChangeGroup label="created" nodes={created} mvrNames={mvrNames} />
-      {/* Only mutated objects can be diffed (before ≠ after); created/deleted
-          don't get the expander. */}
+      {/* Every group expands to a contents diff: created → its initial state
+          (all additions), mutated → before→after, deleted → its final state
+          (all removals). See `ObjectChangeItem` for the per-kind wording. */}
+      <ObjectChangeGroup
+        label="created"
+        nodes={created}
+        mvrNames={mvrNames}
+        resolvedTypes={resolvedTypes}
+        removals={removals}
+        txDigest={txDigest}
+      />
       <ObjectChangeGroup
         label="mutated"
         nodes={mutated}
         mvrNames={mvrNames}
+        resolvedTypes={resolvedTypes}
         txDigest={txDigest}
       />
-      <ObjectChangeGroup label="deleted" nodes={deleted} mvrNames={mvrNames} />
+      <ObjectChangeGroup
+        label="deleted"
+        nodes={deleted}
+        mvrNames={mvrNames}
+        resolvedTypes={resolvedTypes}
+        txDigest={txDigest}
+      />
     </div>
   )
 }
@@ -1221,12 +1284,17 @@ function ObjectChangeGroup({
   label,
   nodes,
   mvrNames,
+  resolvedTypes,
+  removals,
   txDigest,
 }: {
   label: string
   nodes: ObjectChangeNode[]
   mvrNames: Record<string, string>
-  /** When set (the mutated group), each non-package row can expand to a diff. */
+  resolvedTypes?: Map<string, string | null>
+  removals?: Map<string, ObjectRemoval>
+  /** When set, each non-package row can expand to its contents diff (initial /
+   *  before→after / final, depending on the change kind). */
   txDigest?: string | null
 }) {
   if (nodes.length === 0) return null
@@ -1241,6 +1309,8 @@ function ObjectChangeGroup({
             key={n.address}
             node={n}
             mvrName={mvrNames[n.address]}
+            resolvedTypes={resolvedTypes}
+            removal={removals?.get(n.address)}
             txDigest={txDigest ?? null}
           />
         ))}
@@ -1254,18 +1324,35 @@ function ObjectChangeGroup({
 function ObjectChangeItem({
   node,
   mvrName,
+  resolvedTypes,
+  removal,
   txDigest,
 }: {
   node: ObjectChangeNode
   mvrName?: string
+  resolvedTypes?: Map<string, string | null>
+  /** Set when this (created) object has since been deleted — the removing tx. */
+  removal?: ObjectRemoval
   txDigest: string | null
 }) {
   const [open, setOpen] = useState(false)
   // A created/mutated package has no `asMoveObject` — surface its type as
   // "package" (with its MVR name when one is registered) instead of blank.
   const isPackage = !!node.outputState?.asMovePackage
-  const type = changeType(node)
+  const type = changeType(node, resolvedTypes)
   const diffable = !!txDigest && !isPackage
+
+  // What the expander reveals depends on the change kind: a created object shows
+  // its initial state (all additions), a deleted one its final state (all
+  // removals), a mutated one the before→after diff.
+  const isCreated = node.idCreated && !node.idDeleted
+  const isDeleted = node.idDeleted
+  const noun = isCreated ? 'initial state' : isDeleted ? 'final state' : 'changes'
+  const expandTitle = isCreated
+    ? 'the object’s initial contents, created in this transaction'
+    : isDeleted
+      ? 'the object’s final contents, deleted in this transaction'
+      : 'what this transaction changed in this object'
 
   return (
     <li className="py-2">
@@ -1293,16 +1380,27 @@ function ObjectChangeItem({
             </span>
           )
         )}
+        {removal && (
+          <span
+            className="inline-flex shrink-0 items-center gap-1.5"
+            title="this object has since been deleted"
+          >
+            <span className="text-danger/80 text-[0.6875rem] tracking-wide lowercase">
+              → deleted in
+            </span>
+            <LinkedHash value={removal.digest} />
+          </span>
+        )}
         {diffable && (
           <button
             type="button"
             onClick={() => setOpen((o) => !o)}
             aria-expanded={open}
-            title="what this transaction changed in this object"
+            title={expandTitle}
             className="text-muted hover:text-primary ml-auto inline-flex shrink-0 items-center gap-1 font-mono text-[0.6875rem] transition-colors"
           >
             {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            {open ? 'hide changes' : 'show changes'}
+            {open ? `hide ${noun}` : `show ${noun}`}
           </button>
         )}
       </div>

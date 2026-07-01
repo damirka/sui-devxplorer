@@ -7,6 +7,7 @@
  * everything this page shows; the rest of this module just shapes that blob.
  */
 import { gqlRequest } from './graphql'
+import { readEpochCache, writeEpochCache } from './epochCache'
 import type { Network } from '@/context/network-context'
 
 // 0x5's lone dynamic field is the versioned inner system state; its MoveValue
@@ -497,9 +498,15 @@ export interface ValidatorRef {
 // Projects ONLY each active validator's staking-pool id, address, and name — by
 // hitting each `Validator.contents` MoveValue with aliased `extract`s — instead
 // of pulling the whole (~290 KB) system-state blob. Paginated; ~150 validators.
+// It also reads the epoch's start + duration so callers can cache the result
+// until the next-epoch boundary (the committee turns over once per epoch).
 const VALIDATOR_POOLS_QUERY = `
 query ValidatorPools($after: String) {
   epoch {
+    systemState {
+      epochStartMs: extract(path: "epoch_start_timestamp_ms") { json }
+      epochDurationMs: extract(path: "parameters.epoch_duration_ms") { json }
+    }
     validatorSet {
       activeValidators(first: 50, after: $after) {
         pageInfo { hasNextPage endCursor }
@@ -516,14 +523,24 @@ query ValidatorPools($after: String) {
 }
 `
 
-/** One page of pool → validator entries, plus the next cursor. */
+/** One page of pool → validator entries, the next cursor, and the scheduled
+ *  next-epoch boundary (epoch start + duration, epoch-ms) or `null`. */
 async function fetchValidatorPoolsPage(
   network: Network,
   after: string | null,
   signal?: AbortSignal,
-): Promise<{ entries: [string, ValidatorRef][]; hasNextPage: boolean; endCursor: string | null }> {
+): Promise<{
+  entries: [string, ValidatorRef][]
+  hasNextPage: boolean
+  endCursor: string | null
+  nextEpochMs: number | null
+}> {
   const { data } = await gqlRequest<{
     epoch: {
+      systemState: {
+        epochStartMs: { json: unknown } | null
+        epochDurationMs: { json: unknown } | null
+      } | null
       validatorSet: {
         activeValidators: {
           pageInfo: { hasNextPage: boolean; endCursor: string | null }
@@ -538,8 +555,11 @@ async function fetchValidatorPoolsPage(
       }
     } | null
   }>(network, VALIDATOR_POOLS_QUERY, { after }, signal)
+  const start = num(data.epoch?.systemState?.epochStartMs?.json)
+  const duration = num(data.epoch?.systemState?.epochDurationMs?.json)
+  const nextEpochMs = start > 0 && duration > 0 ? start + duration : null
   const conn = data.epoch?.validatorSet.activeValidators
-  if (!conn) return { entries: [], hasNextPage: false, endCursor: null }
+  if (!conn) return { entries: [], hasNextPage: false, endCursor: null, nextEpochMs }
   const entries: [string, ValidatorRef][] = []
   for (const n of conn.nodes) {
     const poolId = str(n.contents?.poolId?.json)
@@ -548,26 +568,46 @@ async function fetchValidatorPoolsPage(
       entries.push([poolId, { address, name: str(n.contents?.name?.json) ?? '(unnamed)' }])
     }
   }
-  return { entries, hasNextPage: conn.pageInfo.hasNextPage, endCursor: conn.pageInfo.endCursor }
+  return {
+    entries,
+    hasNextPage: conn.pageInfo.hasNextPage,
+    endCursor: conn.pageInfo.endCursor,
+    nextEpochMs,
+  }
 }
+
+// The active committee (its names / pool ids) turns over only at an epoch change,
+// so we cache the map across sessions until the next-epoch boundary — a stake
+// page then resolves validator names with no network round-trip most of the day.
+const VALIDATOR_POOLS_CACHE = 'validator-pools'
 
 /**
  * A `stakingPoolId → { address, name }` map for every active validator — the lean
  * lookup that turns a `StakedSui`'s `pool_id` into the validator it's staked with.
  * Only active-set pools are present; a stake into an inactive/removed validator
  * won't resolve (the caller falls back to showing the raw pool id).
+ *
+ * Cached in localStorage until the next-epoch boundary (see {@link readEpochCache}).
  */
 export async function fetchValidatorPools(
   network: Network,
   signal?: AbortSignal,
 ): Promise<Map<string, ValidatorRef>> {
-  const out = new Map<string, ValidatorRef>()
+  const cached = readEpochCache<[string, ValidatorRef][]>(VALIDATOR_POOLS_CACHE, network)
+  if (cached) return new Map(cached)
+
+  const entries: [string, ValidatorRef][] = []
   let after: string | null = null
+  let nextEpochMs: number | null = null
   for (;;) {
     const page = await fetchValidatorPoolsPage(network, after, signal)
-    for (const [poolId, ref] of page.entries) out.set(poolId, ref)
+    entries.push(...page.entries)
+    if (nextEpochMs == null) nextEpochMs = page.nextEpochMs
     if (!page.hasNextPage) break
     after = page.endCursor
   }
-  return out
+  if (nextEpochMs != null) {
+    writeEpochCache(VALIDATOR_POOLS_CACHE, network, entries, nextEpochMs)
+  }
+  return new Map(entries)
 }

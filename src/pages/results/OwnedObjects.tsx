@@ -28,7 +28,12 @@ import {
   type CoinMeta,
 } from '@/lib/coin'
 import { resolveMvrType } from '@/lib/mvr'
-import { fetchOwnedSuinsNames, type OwnedSuinsName } from '@/lib/suins'
+import {
+  fetchOwnedSuinsNames,
+  isSuinsType,
+  SUINS_REGISTRATION_MVR,
+  type OwnedSuinsName,
+} from '@/lib/suins'
 import { fetchOwnedStakedSui, isStakedSuiType, type OwnedStakedSui } from '@/lib/staking'
 import { fetchValidatorPools, type ValidatorRef } from '@/lib/validators'
 import { isUpgradeCapType } from '@/lib/upgradeCap'
@@ -67,18 +72,6 @@ function coinInnerType(repr: string | null | undefined): string | null {
   return m ? m[1] : null
 }
 
-/** The SuiNS registration type as an MVR *type* name, resolved to a per-network
- * on-chain type via `resolveMvrType` (so no hardcoded per-network package id).
- * Pinned to `/1` because `SuinsRegistration` is defined in SuiNS Core V1 — the
- * unversioned `@suins/core` is a facade package the type filter wouldn't match. */
-const SUINS_REGISTRATION_MVR =
-  '@suins/core/1::suins_registration::SuinsRegistration'
-
-/** Does a type repr name a SuiNS registration? Matched by `module::struct` so the
- * per-network / upgraded package id still counts. */
-function isSuinsType(repr: string | null | undefined): boolean {
-  return !!repr && /::suins_registration::SuinsRegistration$/.test(repr)
-}
 
 /** The Move Registry app-registration capability (`app_record::AppCap`): owning
  * one means you control a registered MVR app/package name. Matched by
@@ -136,7 +129,15 @@ function suinsExpiry(ms: number | null): { text: string; expired: boolean } {
   return { text, expired: ms < Date.now() }
 }
 
-export function OwnedObjects({ id }: { id: string }) {
+export function OwnedObjects({
+  id,
+  hideWhenEmpty = false,
+}: {
+  id: string
+  /** Render nothing while the id owns no objects — for pages (e.g. a deleted /
+   *  wrapped object) where the panel is only worth showing if it has content. */
+  hideWhenEmpty?: boolean
+}) {
   const { network } = useNetwork()
   const [filter, setFilter] = useState<Filter>(null)
   // The ownership scan lives here (not in `TypesOwned`) so its by-product — the
@@ -153,6 +154,10 @@ export function OwnedObjects({ id }: { id: string }) {
 
   // Clear the filter when the owner or network changes.
   useEffect(() => setFilter(null), [id, network])
+
+  // Self-hide when asked and the id owns nothing (stays hidden through the scan —
+  // it only pops in once something is found, no empty flash).
+  if (hideWhenEmpty && scan.total === 0 && !scan.error) return null
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[22rem_1fr]">

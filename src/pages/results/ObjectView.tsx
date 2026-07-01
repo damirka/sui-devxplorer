@@ -16,7 +16,8 @@ import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
 import {
   fetchObject,
-  fetchObjectVersions,
+  fetchObjectBounds,
+  fetchCreationTx,
   fetchDisplayDefinition,
   fetchTypeDefinition,
   fetchVersionedInner,
@@ -35,13 +36,18 @@ import { ObjectTransactions } from './ObjectTransactions'
 import { Badge } from '@/components/ui/Badge'
 import { SuinsNames } from './SuinsNames'
 import { SignerPanel } from './SignerPanel'
-import { fetchSignerScheme } from '@/lib/transaction'
+import { fetchSignerScheme, fetchObjectRemovalTx } from '@/lib/transaction'
 import { MvrChip } from './MvrChip'
 import { UpgradeCapPanel, upgradeCapData } from './UpgradeCapPanel'
 import { OwnedUpgradeCaps } from './OwnedUpgradeCaps'
 import { Balances } from './Balances'
 import { DisplayModal } from './DisplayModal'
-import { fetchDefaultSuinsName, atName } from '@/lib/suins'
+import {
+  fetchDefaultSuinsName,
+  atName,
+  isSuinsType,
+  SUINS_REGISTRATION_MVR,
+} from '@/lib/suins'
 import { isStakedSuiType } from '@/lib/staking'
 import { resolveMvrType } from '@/lib/mvr'
 import {
@@ -89,15 +95,6 @@ function versionedField(
       : null
   return { versionedId: id, version }
 }
-
-// The SuiNS registration NFT, as an MVR *type* name. Detection is strict: the
-// object's type must equal this name resolved through MVR for the current network
-// (`resolveMvrType`) — a lookalike package with the same `module::struct` is NOT
-// a SuiNS registration. Pinned to `/1` (where the struct is defined; the
-// unversioned `@suins/core` is a facade). A cheap `module::struct` regex only
-// gates *whether to resolve*, never the verdict.
-const SUINS_REGISTRATION_MVR = '@suins/core/1::suins_registration::SuinsRegistration'
-const SUINS_MODULE_STRUCT = /::suins_registration::SuinsRegistration$/
 
 /** Pull a SuiNS registration's domain + expiry out of its Move contents. */
 function suinsFields(json: unknown): { domain: string | null; expirationMs: number | null } {
@@ -240,7 +237,7 @@ export function ObjectView({
   // for this network. The `module::struct` regex is only a cheap gate so we don't
   // resolve MVR on every object page; the equality check is the actual verdict.
   const objType = obj?.asMoveObject?.contents?.type.repr ?? null
-  const looksSuins = !!objType && SUINS_MODULE_STRUCT.test(objType)
+  const looksSuins = isSuinsType(objType)
   const suinsType = useAsync(
     (signal) =>
       looksSuins ? resolveMvrType(network, SUINS_REGISTRATION_MVR, signal) : Promise.resolve(null),
@@ -263,27 +260,27 @@ export function ObjectView({
   // means it's a plain account address. (Not when a version is pinned — that's a
   // specific object lookup, handled above.)
   const noObject = version == null && !loading && !error && data != null && !obj
-  const history = useAsync(
+  // One round-trip probes both ends of the version connection: existence (does it
+  // have any version → was it an object?), its latest version (to pin the
+  // last-known-state snapshot), and its creating tx (first version's producing tx).
+  const bounds = useAsync(
     (signal) =>
-      noObject
-        ? fetchObjectVersions(network, value, { limit: 1 }, signal)
-        : Promise.resolve(null),
+      noObject ? fetchObjectBounds(network, value, signal) : Promise.resolve(null),
     [network, value, noObject],
   )
-  // Still probing the history — hold off on committing to address vs. object.
-  const probingHistory = noObject && history.loading
-  const historyDone = noObject && !history.loading
+  // Still probing — hold off on committing to address vs. object.
+  const probingHistory = noObject && bounds.loading
+  const boundsDone = noObject && !bounds.loading
   // A deleted / wrapped object: gone from the live set but with on-chain history.
-  const isDeletedObject = historyDone && (history.data?.items.length ?? 0) > 0
-  // Fall through to "account address" once the history probe comes back empty
+  const isDeletedObject = boundsDone && (bounds.data?.exists ?? false)
+  // Fall through to "account address" once the probe comes back with no versions
   // (or errors — the safe default is the address view).
-  const isAddress = historyDone && !isDeletedObject
+  const isAddress = boundsDone && !isDeletedObject
 
   // A deleted/wrapped object is gone from *latest*, but its last state is still
-  // queryable by pinning to its final version (from the history probe). So we can
-  // show what it *was* — its type, contents, and owner-at-deletion — not just
-  // that it's gone. Only fetched once we know it's a deleted object.
-  const lastVersion = history.data?.items[0]?.version ?? null
+  // queryable by pinning to its final version (from the probe). So we can show
+  // what it *was* — its type, contents, and owner-at-deletion.
+  const lastVersion = bounds.data?.lastVersion ?? null
   const snapshot = useAsync(
     (signal) =>
       isDeletedObject && lastVersion != null
@@ -294,6 +291,18 @@ export function ObjectView({
   const snapObj = snapshot.data?.object ?? null
   const snapType = snapObj?.asMoveObject?.contents?.type.repr ?? null
   const snapContents = snapObj?.asMoveObject?.contents?.json
+  // Creating tx (first version) for the deleted object's overview lineage — comes
+  // free from the same bounds probe.
+  const deletedCreatedTx = bounds.data?.createdTx ?? null
+
+  // The transaction that removed it (deleted / wrapped): the last one to affect
+  // the object. `null` once resolved means its history has aged out of the
+  // endpoint's `affectedObject` retention window, so it can't be looked up here.
+  const removal = useAsync(
+    (signal) =>
+      isDeletedObject ? fetchObjectRemovalTx(network, value, signal) : Promise.resolve(null),
+    [network, value, isDeletedObject],
+  )
 
   // An address carries no on-chain marker for how it signs — the only signal is
   // a transaction it authored. Probe for it once we know this id is an address,
@@ -419,13 +428,33 @@ export function ObjectView({
 
       {isDeletedObject && (
         <div className="space-y-6">
-          <div className="border-danger/40 bg-danger/5 flex flex-wrap items-center gap-x-2 gap-y-1 border px-4 py-3 font-mono text-xs">
-            <span className="text-danger font-semibold tracking-wider uppercase">deleted</span>
-            <span className="text-muted">
-              no longer in the live set — deleted, or wrapped inside another object.
-              its last known state{lastVersion != null ? ` (v${lastVersion})` : ''} and
-              transaction history are below.
-            </span>
+          <div className="border-danger/40 bg-danger/5 space-y-1.5 border px-4 py-3 font-mono text-xs">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="text-danger font-semibold tracking-wider uppercase">deleted</span>
+              <span className="text-muted">
+                no longer in the live set. its last known state
+                {lastVersion != null ? ` (v${lastVersion})` : ''} and transaction history
+                are below.
+              </span>
+            </div>
+            <div className="text-muted">
+              {removal.loading ? (
+                <span className="opacity-60">locating the transaction that removed it…</span>
+              ) : removal.data ? (
+                <span className="inline-flex flex-wrap items-center gap-x-1.5">
+                  <span>{removal.data.deleted ? 'deleted in' : 'removed in'}</span>
+                  <LinkedHash value={removal.data.digest} />
+                  {removal.data.timestamp && (
+                    <span className="text-muted/70">· {formatTimestamp(removal.data.timestamp)}</span>
+                  )}
+                </span>
+              ) : (
+                <span className="text-muted/80">
+                  the removing transaction isn't available — it has aged out of this
+                  endpoint's transaction-index retention window.
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Last known state, recovered by pinning to the final version. */}
@@ -434,6 +463,8 @@ export function ObjectView({
               <ObjectOverview
                 data={snapObj}
                 type={snapType ? <TypeLink type={snapType} copy /> : undefined}
+                createdTx={deletedCreatedTx}
+                deletedTx={removal.data?.digest ?? null}
               />
               {snapContents != null && (
                 <Panel>
@@ -451,7 +482,15 @@ export function ObjectView({
             </Panel>
           ) : null}
 
-          <ObjectTransactions id={value} currentVersion={null} />
+          {/* A wrapped object (also object()==null) can still hold dynamic fields
+              / own objects / carry balances — surface them when present. */}
+          <DynamicFields id={value} hideWhenEmpty />
+          <Balances id={value} hideWhenEmpty />
+          <OwnedObjects id={value} hideWhenEmpty />
+          {/* Versions + the txs that touched it — the same panels a live object
+              gets. Each version links to its snapshot (pinned-version query). */}
+          <ObjectHistory id={value} currentVersion={lastVersion} />
+          <ObjectTransactions id={value} currentVersion={null} removal={removal.data} />
         </div>
       )}
 
@@ -518,6 +557,17 @@ function MoveObjectBody({
   const newerVersion = data.newerVersion?.nodes[0]?.version ?? null
   const historical = newerVersion != null
   const hasHistory = olderVersion != null || newerVersion != null
+  // Only owned (address/object-owned) objects have a meaningful per-version owner
+  // timeline; shared/immutable ones never change hands. Used by the version /
+  // transactions panels below.
+  const ownedByAddress = !!describeOwner(data.owner).address
+
+  // The tx that created this object (its first version), for the overview's tx
+  // lineage — the same regardless of which version is being viewed.
+  const creation = useAsync(
+    (signal) => fetchCreationTx(network, data.address, signal),
+    [network, data.address],
+  )
 
   // Hidden power-user nav: ←/→ step to the older/newer version (unless typing
   // in a field). Exact neighbours, so it hops across Lamport-version gaps.
@@ -578,7 +628,7 @@ function MoveObjectBody({
       defSig
         ? fetchTypeDefinition(network, defSig, signal)
         : Promise.resolve(null),
-    [network, objectType],
+    [network, defSig],
   )
 
   const showTypeDef = typeDef.loading || !!typeDef.data || !!innerRepr
@@ -635,7 +685,7 @@ function MoveObjectBody({
             : undefined
         }
       >
-        <ObjectOverview data={data} type={typeField} />
+        <ObjectOverview data={data} type={typeField} createdTx={creation.data} />
 
         {showTypeDef && (
           <Panel>
@@ -672,7 +722,7 @@ function MoveObjectBody({
         <ObjectHistory
           id={data.address}
           currentVersion={data.version}
-          showOwners={!!describeOwner(data.owner).address}
+          showOwners={ownedByAddress}
         />
       )}
 
@@ -816,7 +866,7 @@ function MoveObjectBody({
             currentVersion={data.version}
             // Only owned objects have a meaningful per-version owner timeline;
             // shared/immutable ones don't change hands.
-            showOwners={!!describeOwner(data.owner).address}
+            showOwners={ownedByAddress}
           />
         </>
       )}
