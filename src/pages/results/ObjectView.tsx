@@ -16,6 +16,7 @@ import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
 import {
   fetchObject,
+  fetchObjectVersions,
   fetchDisplayDefinition,
   fetchTypeDefinition,
   fetchVersionedInner,
@@ -254,12 +255,45 @@ export function ObjectView({
   const isPackage = !!obj?.asMovePackage
   // A pinned version that resolves to nothing is a bad version, not an address.
   const missingVersion = version != null && !loading && !error && data != null && !obj
-  // Object ids and account addresses share a shape. When nothing resolves at
-  // the id, don't dead-end: treat it as an account address — it may still own
-  // objects and have transaction history worth seeing. (Not when a version is
-  // pinned — that's a specific object lookup, handled above.)
-  const isAddress =
-    version == null && !loading && !error && data != null && !obj
+  // Nothing resolved at this id as a live top-level object — it's one of two
+  // things, and object ids / account addresses share a shape so we can't tell
+  // from the id alone. Probe the id's *version history*: a non-empty history
+  // means it once existed as an object (now deleted, or wrapped inside another
+  // object), so we surface that history instead of dead-ending. An empty history
+  // means it's a plain account address. (Not when a version is pinned — that's a
+  // specific object lookup, handled above.)
+  const noObject = version == null && !loading && !error && data != null && !obj
+  const history = useAsync(
+    (signal) =>
+      noObject
+        ? fetchObjectVersions(network, value, { limit: 1 }, signal)
+        : Promise.resolve(null),
+    [network, value, noObject],
+  )
+  // Still probing the history — hold off on committing to address vs. object.
+  const probingHistory = noObject && history.loading
+  const historyDone = noObject && !history.loading
+  // A deleted / wrapped object: gone from the live set but with on-chain history.
+  const isDeletedObject = historyDone && (history.data?.items.length ?? 0) > 0
+  // Fall through to "account address" once the history probe comes back empty
+  // (or errors — the safe default is the address view).
+  const isAddress = historyDone && !isDeletedObject
+
+  // A deleted/wrapped object is gone from *latest*, but its last state is still
+  // queryable by pinning to its final version (from the history probe). So we can
+  // show what it *was* — its type, contents, and owner-at-deletion — not just
+  // that it's gone. Only fetched once we know it's a deleted object.
+  const lastVersion = history.data?.items[0]?.version ?? null
+  const snapshot = useAsync(
+    (signal) =>
+      isDeletedObject && lastVersion != null
+        ? fetchObject(network, value, lastVersion, signal)
+        : Promise.resolve(null),
+    [network, value, isDeletedObject, lastVersion],
+  )
+  const snapObj = snapshot.data?.object ?? null
+  const snapType = snapObj?.asMoveObject?.contents?.type.repr ?? null
+  const snapContents = snapObj?.asMoveObject?.contents?.json
 
   // An address carries no on-chain marker for how it signs — the only signal is
   // a transaction it authored. Probe for it once we know this id is an address,
@@ -319,6 +353,11 @@ export function ObjectView({
           <>
             {frameworkTag && <Badge>{frameworkTag}</Badge>}
             {systemHint && <Badge>{systemHint.tag}</Badge>}
+            {isDeletedObject && (
+              <Badge tone="danger" title="no longer in the live object set — deleted, or wrapped inside another object">
+                deleted
+              </Badge>
+            )}
             {isStakedSuiType(objType) && <Badge>staked sui</Badge>}
             {suins && <Badge kind="suins">suins</Badge>}
             {bridgePaused != null && (
@@ -368,6 +407,52 @@ export function ObjectView({
             view latest
           </Link>
         </EmptyState>
+      )}
+
+      {probingHistory && (
+        <Panel>
+          <PanelSection>
+            <SkeletonLines count={4} />
+          </PanelSection>
+        </Panel>
+      )}
+
+      {isDeletedObject && (
+        <div className="space-y-6">
+          <div className="border-danger/40 bg-danger/5 flex flex-wrap items-center gap-x-2 gap-y-1 border px-4 py-3 font-mono text-xs">
+            <span className="text-danger font-semibold tracking-wider uppercase">deleted</span>
+            <span className="text-muted">
+              no longer in the live set — deleted, or wrapped inside another object.
+              its last known state{lastVersion != null ? ` (v${lastVersion})` : ''} and
+              transaction history are below.
+            </span>
+          </div>
+
+          {/* Last known state, recovered by pinning to the final version. */}
+          {snapObj ? (
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <ObjectOverview
+                data={snapObj}
+                type={snapType ? <TypeLink type={snapType} copy /> : undefined}
+              />
+              {snapContents != null && (
+                <Panel>
+                  <PanelSection label="Fields · last version">
+                    <JsonTree value={snapContents} copy />
+                  </PanelSection>
+                </Panel>
+              )}
+            </div>
+          ) : snapshot.loading ? (
+            <Panel>
+              <PanelSection label="Last known state">
+                <SkeletonLines count={4} />
+              </PanelSection>
+            </Panel>
+          ) : null}
+
+          <ObjectTransactions id={value} currentVersion={null} />
+        </div>
       )}
 
       {isAddress && (
