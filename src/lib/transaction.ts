@@ -1056,9 +1056,15 @@ export async function fetchTransactions(
   // calls into the package several times repeats the same digest. Collapse to one
   // row per transaction (a tx list shows each tx once). Dedup is per page, so a
   // tx split across a page boundary can still recur once there — rare and benign.
-  const seen = new Set<string>()
-  page.items = page.items.filter((t) => !seen.has(t.digest) && seen.add(t.digest))
+  page.items = dedupeByDigest(page.items)
   return page
+}
+
+/** Keep the first occurrence of each transaction by digest — drops the duplicate
+ *  nodes the `function` filter emits (one per Move call in a PTB). */
+function dedupeByDigest<T extends { digest: string }>(items: T[]): T[] {
+  const seen = new Set<string>()
+  return items.filter((t) => !seen.has(t.digest) && seen.add(t.digest))
 }
 
 /* ─────────────────────── recent success rate ─────────────────────── */
@@ -1101,12 +1107,9 @@ export async function fetchRecentSuccessRate(
     }
   }>(network, SUCCESS_RATE_QUERY, { filter, last: sampleSize }, signal)
 
-  const seen = new Set<string>()
   let sampled = 0
   let success = 0
-  for (const n of data.transactions.nodes ?? []) {
-    if (seen.has(n.digest)) continue
-    seen.add(n.digest)
+  for (const n of dedupeByDigest(data.transactions.nodes ?? [])) {
     const status = n.effects?.status
     if (status == null) continue
     sampled++

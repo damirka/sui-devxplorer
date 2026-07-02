@@ -5,12 +5,11 @@ import { LiveControl, useLivePoll } from '@/components/ui/LiveControl'
 import { DataList } from '@/components/ui/DataList'
 import { LinkedHash, useVersionHref } from '@/components/ui/links'
 import { useNetwork } from '@/context/useNetwork'
-import { useAsync } from '@/lib/useAsync'
 import { describeOwner, fetchObjectVersions, type ObjectVersionNode } from '@/lib/object'
-import { fetchRecentSuccessRate, type ObjectRemoval } from '@/lib/transaction'
+import type { ObjectRemoval } from '@/lib/transaction'
 import { cn } from '@/lib/cn'
 import { TransactionRow } from './TransactionRow'
-import { SuccessRate } from './SuccessRate'
+import { SuccessRate, useRecentSuccessRate } from './SuccessRate'
 
 /**
  * The transactions that touched an object, derived from its version history —
@@ -65,10 +64,7 @@ export function ObjectTransactions({
   // tions (a failed tx produces no new version), so the success rate is drawn
   // from every tx that *touched* the object — `affectedObject` includes the
   // failures — over the last 50.
-  const successRate = useAsync(
-    (signal) => fetchRecentSuccessRate(network, { affectedObject: id }, 50, signal),
-    [network, id],
-  )
+  const successRate = useRecentSuccessRate(network, { affectedObject: id })
 
   // Pin the removal tx to the very top, but only on the first page (it's the
   // single newest event). The `01` index then belongs to it and versions follow.

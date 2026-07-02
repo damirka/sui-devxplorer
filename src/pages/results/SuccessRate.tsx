@@ -1,5 +1,25 @@
-import type { RecentSuccessRate } from '@/lib/transaction'
+import { useAsync } from '@/lib/useAsync'
+import {
+  fetchRecentSuccessRate,
+  type RecentSuccessRate,
+  type TxFilter,
+} from '@/lib/transaction'
+import type { Network } from '@/context/network-context'
 import { cn } from '@/lib/cn'
+
+/**
+ * Success rate over the last 50 transactions matching `filter`, as `useAsync`
+ * state. `filter` is a fresh one-key object each render, so we key the fetch on
+ * its single `kind:value` entry rather than the object identity — otherwise it
+ * would refetch every render. Pair the result's `.data` with `<SuccessRate>`.
+ */
+export function useRecentSuccessRate(network: Network, filter: TxFilter) {
+  const [kind, value] = Object.entries(filter)[0] ?? ['', '']
+  return useAsync(
+    (signal) => fetchRecentSuccessRate(network, filter, 50, signal),
+    [network, kind, String(value)],
+  )
+}
 
 /**
  * A compact "recent success rate" chip for a transaction feed's header —

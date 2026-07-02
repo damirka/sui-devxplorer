@@ -2,10 +2,9 @@ import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Pager, usePagedList } from '@/components/ui/Pager'
 import { LiveControl, useLivePoll } from '@/components/ui/LiveControl'
 import { useNetwork } from '@/context/useNetwork'
-import { useAsync } from '@/lib/useAsync'
-import { fetchTransactions, fetchRecentSuccessRate, type TxFilter } from '@/lib/transaction'
+import { fetchTransactions, type TxFilter } from '@/lib/transaction'
 import { TransactionList } from './TransactionList'
-import { SuccessRate } from './SuccessRate'
+import { SuccessRate, useRecentSuccessRate } from './SuccessRate'
 
 /** What the id relates to: txs it signed, touched it, or called into it. */
 export type TxRelation = 'sent' | 'object' | 'function'
@@ -31,6 +30,7 @@ export function Txs({
   label?: string
 }) {
   const { network } = useNetwork()
+  const filter = filterFor(relation, id)
 
   // "Live" mode polls for new transactions. New txs land at the top (the feed is
   // newest-first), so `usePagedList` pins to the first page and reports
@@ -39,17 +39,13 @@ export function Txs({
 
   const { items, loading, error, paged, pagerProps } = usePagedList(
     `${network}|${id}|${relation}`,
-    (args, signal) =>
-      fetchTransactions(network, filterFor(relation, id), args, signal),
+    (args, signal) => fetchTransactions(network, filter, args, signal),
     { pollMs },
   )
 
   // Recent-activity health: success rate over the last 50 matching txs. One
   // small query, independent of the paged list / live polling.
-  const successRate = useAsync(
-    (signal) => fetchRecentSuccessRate(network, filterFor(relation, id), 50, signal),
-    [network, id, relation],
-  )
+  const successRate = useRecentSuccessRate(network, filter)
 
   const showSender = relation !== 'sent'
 
