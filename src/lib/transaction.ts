@@ -106,7 +106,13 @@ export type TxInput =
       type?: string | null
     }
   | { __typename: 'Receiving'; object: InputObject }
-  | { __typename: 'BalanceWithdraw'; type: { repr: string } | null }
+  | {
+      __typename: 'BalanceWithdraw'
+      /** The withdrawn `Balance<T>` type (`typeArg`), or `null`. */
+      type: { repr: string } | null
+      /** The reserved amount (`MaxAmountU64`, a u64 string), or `null`. */
+      amount: string | null
+    }
 
 /** The non-programmable `TransactionKind` members — system transactions. */
 export type SystemTransactionKind =
@@ -345,7 +351,13 @@ type BcsObjectArg =
 type BcsInput =
   | { $kind: 'Pure'; Pure: { bytes: string } }
   | { $kind: 'Object'; Object: BcsObjectArg }
-  | { $kind: 'FundsWithdrawal'; FundsWithdrawal: { typeArg?: { Balance?: string } } }
+  | {
+      $kind: 'FundsWithdrawal'
+      FundsWithdrawal: {
+        typeArg?: { Balance?: string }
+        reservation?: { MaxAmountU64?: string }
+      }
+    }
 
 interface BcsMoveCall {
   package: string
@@ -443,8 +455,10 @@ function buildInputs(
         : { __typename: 'Pure', bytes: inp.Pure.bytes }
     }
     if (inp.$kind === 'FundsWithdrawal') {
-      const repr = inp.FundsWithdrawal?.typeArg?.Balance ?? null
-      return { __typename: 'BalanceWithdraw', type: repr ? { repr } : null }
+      const w = inp.FundsWithdrawal
+      const repr = w?.typeArg?.Balance ?? null
+      const amount = w?.reservation?.MaxAmountU64 ?? null
+      return { __typename: 'BalanceWithdraw', type: repr ? { repr } : null, amount }
     }
     const o = inp.Object
     if (o.$kind === 'SharedObject') {

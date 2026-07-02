@@ -202,8 +202,10 @@ function inputText(
       return input.object.address
     case 'SharedInput':
       return input.address
-    case 'BalanceWithdraw':
-      return input.type ? `withdraw<${input.type.repr}>` : 'withdraw'
+    case 'BalanceWithdraw': {
+      const amt = input.amount != null ? `(${input.amount})` : ''
+      return input.type ? `withdraw<${input.type.repr}>${amt}` : `withdraw${amt}`
+    }
   }
 }
 
@@ -329,8 +331,13 @@ function inputExpr(inp: TxInput, inferredPure: string | undefined): string {
       return pureExpr(inp.type.repr, inp.json)
     case 'Pure':
       return rawPureExpr(inp.bytes, inferredPure)
-    case 'BalanceWithdraw':
-      return inp.type ? `tx.object(/* withdraw ${inp.type.repr} */)` : 'tx.gas'
+    case 'BalanceWithdraw': {
+      // An address-balance withdrawal — the SDK's dedicated `withdrawal` input,
+      // NOT `tx.object`. It reserves up to `amount` of `Balance<type>` (defaults
+      // to SUI) from the sender's balance accumulator.
+      const amount = inp.amount != null ? `${inp.amount}n` : '/* amount */ 0n'
+      return `tx.withdrawal({ amount: ${amount}, type: ${q(inp.type?.repr ?? '0x2::sui::SUI')} })`
+    }
   }
 }
 
@@ -776,7 +783,9 @@ function cliInput(inp: TxInput | undefined, inferred: string | undefined): strin
       return `0x${base64ToHex(inp.bytes)}`
     }
     case 'BalanceWithdraw':
-      return 'gas'
+      // `sui client ptb` has no address-balance-withdrawal flag — emit an
+      // obvious placeholder rather than a misleading `gas`.
+      return `<balance-withdraw ${inp.type?.repr ?? '0x2::sui::SUI'}>`
   }
 }
 

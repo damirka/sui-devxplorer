@@ -17,23 +17,35 @@ import {
 } from '@/lib/coin'
 import { formatTokenAmount } from '@/lib/format'
 import { normalizeSuiId } from '@/lib/search'
+import type { Network } from '@/context/network-context'
 
 /** The native gas coin's full type repr (the form the service returns). */
 const SUI_TYPE = normalizeSuiId('2') + '::sui::SUI'
 
 /**
- * The standard coins, pinned to the top in this order. They're fetched directly
- * by their canonical type — so they always show first regardless of where they'd
- * fall in the (server-ordered, paginated) full balance list — and a same-symbol
- * look-alike can never take their spot.
+ * The standard coins to pin at the top, in display order. They're fetched
+ * directly by their canonical type — so they always show first regardless of
+ * where they'd fall in the (server-ordered, paginated) full balance list — and a
+ * same-symbol look-alike can never take their spot.
+ *
+ * Keyed by network: only SUI shares a type across networks; WAL / USDC / NS each
+ * have a network-specific package id, so a flat list pinned the wrong (or a
+ * non-existent) coin off-mainnet. We only list ids we can pin with confidence —
+ * mainnet's canonical tokens — and fall back to SUI-only elsewhere, since a wrong
+ * id simply never matches (harmless) but shouldn't masquerade as the standard.
  */
-const STANDARD_TYPES = [
-  SUI_TYPE,
-  '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
-  '0x255b9db92dc4b602c8b7930d558e8474f571ba192c77323bf2da3ad2fefe7e08::usdc::USDC',
-  '0x5145494a5f5100e645e4b0aa950fa6b68f614e8c59e17bc5ded3495123a79178::ns::NS',
-]
-const STANDARD_SET = new Set(STANDARD_TYPES)
+const STANDARD_TYPES_BY_NETWORK: Record<Network, string[]> = {
+  mainnet: [
+    SUI_TYPE,
+    '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
+    // Native (Circle) USDC on mainnet — NOT the older bridged coin.
+    '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    '0x5145494a5f5100e645e4b0aa950fa6b68f614e8c59e17bc5ded3495123a79178::ns::NS',
+  ],
+  testnet: [SUI_TYPE],
+  devnet: [SUI_TYPE],
+  custom: [SUI_TYPE],
+}
 
 /** Grouped raw integer — fallback when a coin's decimals aren't known. */
 function rawBalance(raw: string): string {
@@ -65,6 +77,9 @@ export function Balances({
   defaultOpen?: boolean
 }) {
   const { network } = useNetwork()
+  // The standard coins to pin for this network (only SUI is shared across all).
+  const standardTypes = STANDARD_TYPES_BY_NETWORK[network] ?? [SUI_TYPE]
+  const standardSet = new Set(standardTypes)
   const [open, setOpen] = useState(defaultOpen)
   // Latch the fetch on first open: nothing loads while it's never been expanded
   // (the point of `defaultOpen={false}`), and reopening stays instant afterwards.
@@ -80,7 +95,7 @@ export function Balances({
   const { data: standardData, loading: standardLoading } = useAsync(
     (signal) =>
       everOpened
-        ? fetchBalancesForTypes(network, id, STANDARD_TYPES, signal)
+        ? fetchBalancesForTypes(network, id, standardTypes, signal)
         : Promise.resolve<CoinBalance[]>([]),
     [network, id, everOpened],
   )
@@ -109,17 +124,17 @@ export function Balances({
     if (r.total !== '0') pinnedByType.set(r.coinType, r)
   }
   for (const r of pageBalances) {
-    if (STANDARD_SET.has(r.coinType) && r.total !== '0' && !pinnedByType.has(r.coinType)) {
+    if (standardSet.has(r.coinType) && r.total !== '0' && !pinnedByType.has(r.coinType)) {
       pinnedByType.set(r.coinType, r)
     }
   }
-  const pinned = STANDARD_TYPES.map((t) => pinnedByType.get(t)).filter(
-    (r): r is CoinBalance => !!r,
-  )
+  const pinned = standardTypes
+    .map((t) => pinnedByType.get(t))
+    .filter((r): r is CoinBalance => !!r)
 
   // Everything else (non-standard, non-zero), in the service's order.
   const rest = pageBalances.filter(
-    (r) => !STANDARD_SET.has(r.coinType) && r.total !== '0',
+    (r) => !standardSet.has(r.coinType) && r.total !== '0',
   )
   // Pin only on the first page; deeper pages are just the paginated remainder.
   const rows: CoinBalance[] =
@@ -163,6 +178,10 @@ export function Balances({
           ) : undefined
         }
       >
+        {/* No inner scroll cap on the list below: it's paginated, so the page
+            size governs how many rows show. Capping the height too would hide the
+            extra rows a larger page size fetches — making "N / page" look broken —
+            and pit a nested scrollbar against the page scroll. */}
         {open && (
           <DataList
             loading={loading}
@@ -170,7 +189,6 @@ export function Balances({
             items={rows}
             empty={<Muted>no coin balances.</Muted>}
             skeleton={3}
-            scroll
           >
             {(r) => {
               const m = meta?.get(r.coinType)

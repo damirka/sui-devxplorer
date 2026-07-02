@@ -18,6 +18,7 @@ import { JsonBlock, linkifyAddresses } from '@/components/ui/JsonBlock'
 import { HoverCard } from '@/components/ui/HoverCard'
 import { CopyButton } from '@/components/ui/CopyButton'
 import { Field, FieldGrid, Muted } from '@/components/ui/Field'
+import { Badge } from '@/components/ui/Badge'
 import { CoinIcon } from '@/components/ui/CoinIcon'
 import { DANGER_PRE } from '@/components/ui/codeBlock'
 import { cn } from '@/lib/cn'
@@ -98,13 +99,32 @@ export function TransactionView({ value }: { value: string }) {
     [network, value],
   )
 
+  // Sui's free stablecoin transfer: a successful programmable transaction (not a
+  // system tx) that cost zero gas. Heuristic, flagged as a header tag.
+  const fx = data?.effects
+  const freeTransfer =
+    fx?.status === 'SUCCESS' &&
+    data?.kind?.__typename === 'ProgrammableTransaction' &&
+    netGasUsed(fx.gasEffects?.gasSummary) === 0n
+
   return (
     <div>
       <ResultHeader
         kind="transaction"
         label="Transaction"
         value={value}
-        meta={data?.effects?.status ? <StatusPill status={data.effects.status} /> : undefined}
+        meta={
+          fx?.status ? (
+            <>
+              <StatusPill status={fx.status} />
+              {freeTransfer && (
+                <Badge title="zero-gas programmable transaction — Sui's free stablecoin transfer">
+                  free transfer
+                </Badge>
+              )}
+            </>
+          ) : undefined
+        }
       />
 
       {loading && (
