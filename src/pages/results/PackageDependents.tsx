@@ -1,5 +1,5 @@
 import { Panel, PanelSection } from '@/components/ui/Panel'
-import { Pager, useCursorPager } from '@/components/ui/Pager'
+import { Pager, useCursorPager, shouldShowPager } from '@/components/ui/Pager'
 import { RowIndex } from '@/components/ui/RowIndex'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { LinkedHash, EntityLink } from '@/components/ui/links'
@@ -56,7 +56,7 @@ export function PackageDependents({ packageId }: { packageId: string }) {
                 {formatCount(data.total)} total
               </span>
             )}
-            {(rows.length > 0 || pager.pageIndex > 0) && (
+            {shouldShowPager(rows.length, pager.pageIndex, !!data?.nextCursor) && (
               <Pager
                 pageIndex={pager.pageIndex}
                 pageSize={pager.pageSize}
@@ -79,7 +79,7 @@ export function PackageDependents({ packageId }: { packageId: string }) {
             {rows.map((d, i) => {
               const name = mvrNames[d.packageId]
               return (
-                <li key={d.packageId} className="flex items-center gap-3 py-2.5">
+                <li key={`${d.packageId}-${i}`} className="flex items-center gap-3 py-2.5">
                   <RowIndex n={pager.pageIndex * pager.pageSize + i + 1} />
                   <span className="flex min-w-0 flex-1 items-center gap-2.5">
                     {name ? <EntityLink id={name} /> : <LinkedHash value={d.packageId} />}

@@ -2,8 +2,9 @@ import { Fragment, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useSearchHref } from '@/components/ui/links'
 import { CODE_PRE } from '@/components/ui/codeBlock'
-import { formatType, FRAMEWORK_PREFIX } from '@/lib/format'
+import { formatType, formatSignatureType, FRAMEWORK_PREFIX } from '@/lib/format'
 import type { TypeDefinition } from '@/lib/object'
+import type { MoveFunctionSignature } from '@/lib/move'
 
 /**
  * A node in a Move type signature tree. Covers both the concrete
@@ -160,4 +161,58 @@ export function StructDeclaration({ def }: { def: TypeDefinition }) {
 function fieldSigBody(signature: unknown): SigNode {
   const body = (signature as { body?: SigNode } | null)?.body
   return body ?? '?'
+}
+
+/**
+ * A Move function signature: `visibility entry fun module::name<T..>`, its
+ * positional parameter types, and return types. Types are collapsed to readable
+ * names (framework bared, `$0` → `T0`). Shared by the function page and the
+ * MoveCall hover card; text size / spacing inherit from the caller.
+ */
+export function MoveFunctionSignatureView({
+  moduleName,
+  fn,
+}: {
+  moduleName: string
+  fn: MoveFunctionSignature
+}) {
+  const typeParams = fn.typeParameters
+    .map((tp, i) => {
+      const c = tp.constraints.length
+        ? `: ${tp.constraints.map((x) => x.toLowerCase()).join(' + ')}`
+        : ''
+      return `T${i}${c}`
+    })
+    .join(', ')
+  return (
+    <div className="space-y-1.5 font-mono">
+      <div className="flex flex-wrap items-baseline gap-1">
+        {fn.visibility && <span className="text-muted">{fn.visibility.toLowerCase()}</span>}
+        {fn.isEntry && <span className="text-muted">entry</span>}
+        <span className="text-muted">fun</span>
+        <span className="text-primary break-all">
+          {moduleName}::{fn.name}
+        </span>
+        {typeParams && <span className="text-secondary">&lt;{typeParams}&gt;</span>}
+      </div>
+      {fn.parameters.length > 0 && (
+        <ul className="space-y-0.5">
+          {fn.parameters.map((p, i) => (
+            <li key={i} className="text-text break-all" title={p.repr}>
+              <span className="text-muted">{i}. </span>
+              {formatSignatureType(p.repr)}
+            </li>
+          ))}
+        </ul>
+      )}
+      {fn.return.length > 0 && (
+        <div className="break-all">
+          <span className="text-muted">returns </span>
+          <span className="text-secondary">
+            {fn.return.map((r) => formatSignatureType(r.repr)).join(', ')}
+          </span>
+        </div>
+      )}
+    </div>
+  )
 }

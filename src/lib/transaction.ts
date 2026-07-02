@@ -1061,6 +1061,60 @@ export async function fetchTransactions(
   return page
 }
 
+/* ─────────────────────── recent success rate ─────────────────────── */
+
+/** The success rate over a recent sample of transactions matching a filter. */
+export interface RecentSuccessRate {
+  /** Distinct transactions counted (with a known status). */
+  sampled: number
+  /** How many of those succeeded. */
+  success: number
+}
+
+// Sui GraphQL exposes no status aggregate, so we sample the most recent window
+// and count. `status` alone keeps each node tiny; `digest` lets us dedup, since
+// the `function` filter emits one node per Move call (a multi-call PTB would
+// otherwise be counted several times).
+const SUCCESS_RATE_QUERY = `
+query TxSuccessRate($filter: TransactionFilter, $last: Int) {
+  transactions(last: $last, filter: $filter) {
+    nodes { digest effects { status } }
+  }
+}
+`
+
+/**
+ * Success rate over the last `sampleSize` transactions matching `filter` — a
+ * cheap health signal for an object's or package's recent activity. Deduped by
+ * digest (so a PTB with several calls into a package counts once); transactions
+ * whose effects have aged out (null status) are left out of the sample.
+ */
+export async function fetchRecentSuccessRate(
+  network: Network,
+  filter: TxFilter,
+  sampleSize = 50,
+  signal?: AbortSignal,
+): Promise<RecentSuccessRate> {
+  const { data } = await gqlRequest<{
+    transactions: {
+      nodes: { digest: string; effects: { status: string | null } | null }[]
+    }
+  }>(network, SUCCESS_RATE_QUERY, { filter, last: sampleSize }, signal)
+
+  const seen = new Set<string>()
+  let sampled = 0
+  let success = 0
+  for (const n of data.transactions.nodes ?? []) {
+    if (seen.has(n.digest)) continue
+    seen.add(n.digest)
+    const status = n.effects?.status
+    if (status == null) continue
+    sampled++
+    if (status === 'SUCCESS') success++
+  }
+  return { sampled, success }
+}
+
 /* ─────────────────────── object removal (deletion) ─────────────────────── */
 
 /** The transaction that removed an object from the live set. */

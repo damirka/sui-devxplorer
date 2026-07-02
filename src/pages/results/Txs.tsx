@@ -2,8 +2,10 @@ import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Pager, usePagedList } from '@/components/ui/Pager'
 import { LiveControl, useLivePoll } from '@/components/ui/LiveControl'
 import { useNetwork } from '@/context/useNetwork'
-import { fetchTransactions, type TxFilter } from '@/lib/transaction'
+import { useAsync } from '@/lib/useAsync'
+import { fetchTransactions, fetchRecentSuccessRate, type TxFilter } from '@/lib/transaction'
 import { TransactionList } from './TransactionList'
+import { SuccessRate } from './SuccessRate'
 
 /** What the id relates to: txs it signed, touched it, or called into it. */
 export type TxRelation = 'sent' | 'object' | 'function'
@@ -42,6 +44,13 @@ export function Txs({
     { pollMs },
   )
 
+  // Recent-activity health: success rate over the last 50 matching txs. One
+  // small query, independent of the paged list / live polling.
+  const successRate = useAsync(
+    (signal) => fetchRecentSuccessRate(network, filterFor(relation, id), 50, signal),
+    [network, id, relation],
+  )
+
   const showSender = relation !== 'sent'
 
   return (
@@ -50,6 +59,7 @@ export function Txs({
         label={label}
         action={
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <SuccessRate rate={successRate.data} />
             <LiveControl {...controlProps} />
             {paged && <Pager {...pagerProps} label="transactions" />}
           </div>

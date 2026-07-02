@@ -5,6 +5,23 @@ import { emptyPage, type Page, type PageArgs } from '@/lib/pagination'
 
 const PAGE_SIZES = [10, 25, 50]
 
+/**
+ * Whether the pager (page-size select + prev/next) is worth showing. True when
+ * there's a next page, we're past the first page, OR the current page already
+ * holds more than the smallest page size — that last clause is what keeps the
+ * page-size selector from vanishing when picking a *larger* size makes the whole
+ * list fit on one page (`hasNext` goes false), which read as the control
+ * disappearing and left no way to switch back. `itemCount` is the current page's
+ * length; only meaningful once `pageSize > PAGE_SIZES[0]`, i.e. exactly that case.
+ */
+export function shouldShowPager(
+  itemCount: number,
+  pageIndex: number,
+  hasNext: boolean,
+): boolean {
+  return pageIndex > 0 || hasNext || itemCount > PAGE_SIZES[0]
+}
+
 /** Shared stable empty array, so `usePagedList().items` keeps a constant
  *  reference between fetches — callers can safely use it as a memo/effect dep. */
 const NO_ITEMS: readonly never[] = []
@@ -96,11 +113,12 @@ export function usePagedList<T>(
   )
 
   const hasNext = data?.hasNextPage === true
+  const items = data?.items ?? (NO_ITEMS as readonly T[] as T[])
   return {
-    items: data?.items ?? (NO_ITEMS as readonly T[] as T[]),
+    items,
     loading,
     error,
-    paged: !live && (pager.pageIndex > 0 || hasNext),
+    paged: !live && shouldShowPager(items.length, pager.pageIndex, hasNext),
     pagerProps: {
       pageIndex: pager.pageIndex,
       pageSize: pager.pageSize,

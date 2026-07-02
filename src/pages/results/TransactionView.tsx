@@ -36,6 +36,7 @@ import { netGasUsed } from '@/lib/gas'
 import { fetchObjectTypes } from '@/lib/object'
 import { reverseResolveMvrBulk, mvrAppUrl } from '@/lib/mvr'
 import { ObjectChangeDiff } from './ObjectChangeDiff'
+import { MoveFunctionSignatureView } from './moveType'
 import {
   fetchTransaction,
   fetchFunctionDisassembly,
@@ -1041,47 +1042,7 @@ function ResultCard({ index, cmd }: { index: number; cmd: TxCommand | undefined 
 
 /** The full function signature, shown on hover over a MoveCall target. */
 function SignatureCard({ fn }: { fn: MoveFn }) {
-  const typeParams = fn.typeParameters
-    .map((tp, i) => {
-      const c = tp.constraints.length
-        ? `: ${tp.constraints.map((x) => x.toLowerCase()).join(' + ')}`
-        : ''
-      return `T${i}${c}`
-    })
-    .join(', ')
-  return (
-    <div className="space-y-1.5 font-mono">
-      <div className="flex flex-wrap items-baseline gap-1">
-        {fn.visibility && (
-          <span className="text-muted">{fn.visibility.toLowerCase()}</span>
-        )}
-        {fn.isEntry && <span className="text-muted">entry</span>}
-        <span className="text-muted">fun</span>
-        <span className="text-primary">
-          {fn.module.name}::{fn.name}
-        </span>
-        {typeParams && <span className="text-secondary">&lt;{typeParams}&gt;</span>}
-      </div>
-      {fn.parameters.length > 0 && (
-        <ul className="space-y-0.5">
-          {fn.parameters.map((p, i) => (
-            <li key={i} className="text-text" title={p.repr}>
-              <span className="text-muted">{i}. </span>
-              {formatSignatureType(p.repr)}
-            </li>
-          ))}
-        </ul>
-      )}
-      {fn.return.length > 0 && (
-        <div>
-          <span className="text-muted">returns </span>
-          <span className="text-secondary">
-            {fn.return.map((r) => formatSignatureType(r.repr)).join(', ')}
-          </span>
-        </div>
-      )}
-    </div>
-  )
+  return <MoveFunctionSignatureView moduleName={fn.module.name} fn={fn} />
 }
 
 function commandKind(cmd: TxCommand): string {

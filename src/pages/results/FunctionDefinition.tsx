@@ -1,17 +1,21 @@
+import { useState } from 'react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { CopyButton } from '@/components/ui/CopyButton'
+import { CollapseToggle } from '@/components/ui/CollapseToggle'
 import { CODE_PRE } from '@/components/ui/codeBlock'
 import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
 import { fetchFunctionDisassembly } from '@/lib/transaction'
 import type { MoveFunctionDef } from '@/lib/object'
+import { MoveFunctionSignatureView } from './moveType'
 
 /**
- * The disassembled body of a navigated-to function (`addr::module::name`). The
- * disassembly already opens with the full signature (visibility, type params,
- * parameter + return types), so we show just the asm rather than repeating that
- * structurally. The function counterpart to the struct `TypeDefinitionPanel`.
+ * A navigated-to function (`addr::module::name`). The signature is the headline —
+ * visibility, type params, parameter + return types — since that's what you
+ * usually want. The disassembled body can be large, so it's tucked behind a
+ * collapsible toggle and only fetched once opened. The function counterpart to
+ * the struct `TypeDefinitionPanel`.
  */
 export function FunctionDefinitionPanel({
   packageId,
@@ -22,6 +26,10 @@ export function FunctionDefinitionPanel({
   module: string
   def: MoveFunctionDef
 }) {
+  // Latch: fetch the disassembly only once the user first expands it.
+  const [open, setOpen] = useState(false)
+  const [everOpened, setEverOpened] = useState(false)
+
   return (
     <Panel>
       <PanelSection
@@ -32,13 +40,33 @@ export function FunctionDefinitionPanel({
           </span>
         }
       >
-        <FunctionBody packageId={packageId} module={module} name={def.name} />
+        <div className="text-sm">
+          <MoveFunctionSignatureView moduleName={module} fn={def} />
+        </div>
+
+        <div className="border-line mt-4 border-t pt-3">
+          <CollapseToggle
+            open={open}
+            onToggle={() => {
+              setOpen((v) => !v)
+              setEverOpened(true)
+            }}
+            label="Disassembly"
+          />
+          {open && (
+            <div className="mt-3">
+              {everOpened && (
+                <FunctionBody packageId={packageId} module={module} name={def.name} />
+              )}
+            </div>
+          )}
+        </div>
       </PanelSection>
     </Panel>
   )
 }
 
-/** The function's disassembled body (asm), loaded for the navigated-to function. */
+/** The function's disassembled body (asm), fetched lazily when the section opens. */
 function FunctionBody({
   packageId,
   module,
