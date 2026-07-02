@@ -1030,7 +1030,7 @@ export async function fetchTransactions(
     { filter, last: args.limit, before: args.cursor ?? null },
     signal,
   )
-  return mapBackwardPage(data.transactions, (n) => ({
+  const page = mapBackwardPage(data.transactions, (n) => ({
     digest: n.digest,
     kind: n.kind?.__typename ?? null,
     sender: n.sender?.address ?? null,
@@ -1038,6 +1038,13 @@ export async function fetchTransactions(
     timestamp: n.effects?.timestamp ?? null,
     gas: netGasUsed(n.effects?.gasEffects?.gasSummary),
   }))
+  // The `function` filter yields one node per matching Move call, so a PTB that
+  // calls into the package several times repeats the same digest. Collapse to one
+  // row per transaction (a tx list shows each tx once). Dedup is per page, so a
+  // tx split across a page boundary can still recur once there — rare and benign.
+  const seen = new Set<string>()
+  page.items = page.items.filter((t) => !seen.has(t.digest) && seen.add(t.digest))
+  return page
 }
 
 /* ─────────────────────── object removal (deletion) ─────────────────────── */
