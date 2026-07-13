@@ -35,7 +35,10 @@ export function DataList<T>({
   /** Render one row (its own `<li key>`) per item. */
   children: (item: T, index: number) => ReactNode
 }) {
-  if (loading) return <SkeletonLines count={skeleton} />
+  // Skeleton only when there's nothing to show yet. On a reload (page turn, tab
+  // switch, filter change) the hooks keep the previous items, so the list holds
+  // its height and just dims until the fresh rows land — no skeleton flash.
+  if (loading && items.length === 0) return <SkeletonLines count={skeleton} />
   if (error) return <ErrorText error={error} />
   if (items.length === 0) {
     return typeof empty === 'string' ? (
@@ -46,9 +49,11 @@ export function DataList<T>({
   }
   return (
     <ul
+      aria-busy={loading}
       className={cn(
-        'divide-line divide-y font-mono text-xs',
+        'divide-line divide-y font-mono text-xs transition-opacity',
         scroll && 'max-h-[28rem] overflow-y-auto',
+        loading && 'opacity-50',
         className,
       )}
     >

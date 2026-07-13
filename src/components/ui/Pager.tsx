@@ -125,7 +125,12 @@ export function usePagedList<T>(
       onPageSize: pager.setPageSize,
       hasNext,
       onPrev: pager.prev,
-      onNext: () => pager.next(data?.endCursor ?? null),
+      // The hooks keep stale data across a reload, so `endCursor` may still be
+      // the previous page's while the next one is in flight — ignore clicks
+      // until it lands, or a double-click would re-queue the old cursor.
+      onNext: () => {
+        if (!loading) pager.next(data?.endCursor ?? null)
+      },
     },
   }
 }

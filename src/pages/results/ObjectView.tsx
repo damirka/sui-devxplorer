@@ -505,7 +505,17 @@ export function ObjectView({
           <DynamicFields id={value} hideWhenEmpty />
           <OwnedUpgradeCaps id={value} hideWhenEmpty />
           <OwnedObjects id={value} />
-          <Txs id={value} relation="sent" label="Transactions sent" />
+          {/* Sent = txs this address signed; affected = any tx that involved it
+              (sender OR input/output recipient — transfers in, payouts, etc.). */}
+          <Txs
+            id={value}
+            relation="sent"
+            label="Transactions"
+            tabs={[
+              { relation: 'sent', label: 'sent' },
+              { relation: 'affected', label: 'affected' },
+            ]}
+          />
         </div>
       )}
 

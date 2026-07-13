@@ -10,6 +10,12 @@ export interface AsyncState<T> {
  * Run an async fetcher and track loading/error/data. Re-runs whenever `deps`
  * change; aborts the in-flight request on change/unmount so stale responses
  * never land. The fetcher receives an AbortSignal to forward to `fetch`.
+ *
+ * Stale-while-revalidate: on a deps change the previous `data` is KEPT while
+ * `loading` flips true, so views can hold their layout (e.g. `DataList` dims the
+ * old rows instead of collapsing to a skeleton). Gate on `loading` wherever
+ * acting on another identity's data would be wrong — the data may be stale
+ * whenever `loading` is true.
  */
 export function useAsync<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
@@ -23,7 +29,7 @@ export function useAsync<T>(
 
   useEffect(() => {
     const controller = new AbortController()
-    setState({ data: null, loading: true, error: null })
+    setState((s) => ({ data: s.data, loading: true, error: null }))
 
     fetcher(controller.signal)
       .then((data) => {
@@ -50,10 +56,11 @@ export function useAsync<T>(
 /**
  * Like {@link useAsync}, but additionally re-fetches every `pollMs` while that's
  * a positive number (`null` = no polling) — for live views that watch for new
- * data. Crucially, a poll refresh swaps in the new result *without* clearing the
- * current data, so the list doesn't flash a skeleton every tick; only a `deps`
- * change (real navigation) shows the loading state. Polls pause while the tab is
- * hidden, and transient poll errors are swallowed so the last good data stays.
+ * data. A poll refresh swaps in the new result without touching `loading`; a
+ * `deps` change flips `loading` while KEEPING the current data (stale-while-
+ * revalidate, same as `useAsync`) so lists hold their height across reloads.
+ * Polls pause while the tab is hidden, and transient poll errors are swallowed
+ * so the last good data stays.
  */
 export function usePolledAsync<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
@@ -70,10 +77,11 @@ export function usePolledAsync<T>(
   const fetcherRef = useRef(fetcher)
   fetcherRef.current = fetcher
 
-  // Primary load: clears data + shows loading whenever the query identity changes.
+  // Primary load: flips loading (keeping stale data) when the query identity
+  // changes.
   useEffect(() => {
     const controller = new AbortController()
-    setState({ data: null, loading: true, error: null })
+    setState((s) => ({ data: s.data, loading: true, error: null }))
 
     fetcherRef.current(controller.signal)
       .then((data) => {

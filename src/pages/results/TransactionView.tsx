@@ -35,6 +35,7 @@ import { useAsync } from '@/lib/useAsync'
 import { netGasUsed } from '@/lib/gas'
 import { fetchObjectTypes } from '@/lib/object'
 import { reverseResolveMvrBulk, mvrAppUrl } from '@/lib/mvr'
+import { TabButton } from '@/components/ui/TabButton'
 import { ObjectChangeDiff } from './ObjectChangeDiff'
 import { MoveFunctionSignatureView } from './moveType'
 import {
@@ -586,31 +587,6 @@ function ProgramPanel({
       </PanelSection>
     </Panel>
     </ProgramNamesContext.Provider>
-  )
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'border-b-2 px-2.5 py-1 font-mono text-xs lowercase transition-colors',
-        active
-          ? 'border-primary text-primary'
-          : 'border-transparent text-muted hover:text-text',
-      )}
-    >
-      {children}
-    </button>
   )
 }
 
