@@ -39,6 +39,7 @@ import { SignerPanel } from './SignerPanel'
 import { fetchSignerScheme, fetchObjectRemovalTx } from '@/lib/transaction'
 import { MvrChip } from './MvrChip'
 import { UpgradeCapPanel, upgradeCapData } from './UpgradeCapPanel'
+import { WrappedBody, WrapperPanel } from './WrappedView'
 import { OwnedUpgradeCaps } from './OwnedUpgradeCaps'
 import { Balances } from './Balances'
 import { DisplayModal } from './DisplayModal'
@@ -273,9 +274,16 @@ export function ObjectView({
   const boundsDone = noObject && !bounds.loading
   // A deleted / wrapped object: gone from the live set but with on-chain history.
   const isDeletedObject = boundsDone && (bounds.data?.exists ?? false)
+  // A wrapped UID: the id never had a version of its own (it never existed as a
+  // standalone object), yet a transaction's effects touched it — the signature
+  // of a UID created already embedded inside another object. Its creating tx is
+  // that earliest affecting tx, and the wrapper is recovered from it.
+  const wrappedCreation =
+    boundsDone && !isDeletedObject ? (bounds.data?.firstAffecting ?? null) : null
+  const isWrappedUid = wrappedCreation != null
   // Fall through to "account address" once the probe comes back with no versions
-  // (or errors — the safe default is the address view).
-  const isAddress = boundsDone && !isDeletedObject
+  // and no affecting txs (or errors — the safe default is the address view).
+  const isAddress = boundsDone && !isDeletedObject && !isWrappedUid
 
   // A deleted/wrapped object is gone from *latest*, but its last state is still
   // queryable by pinning to its final version (from the probe). So we can show
@@ -362,9 +370,25 @@ export function ObjectView({
           <>
             {frameworkTag && <Badge>{frameworkTag}</Badge>}
             {systemHint && <Badge>{systemHint.tag}</Badge>}
-            {isDeletedObject && (
-              <Badge tone="danger" title="no longer in the live object set — deleted, or wrapped inside another object">
-                deleted
+            {isDeletedObject &&
+              (removal.data && !removal.data.deleted ? (
+                <Badge
+                  tone="danger"
+                  title="no longer a standalone object — wrapped inside another object"
+                >
+                  wrapped
+                </Badge>
+              ) : (
+                <Badge
+                  tone="danger"
+                  title="no longer in the live object set — deleted, or wrapped inside another object"
+                >
+                  deleted
+                </Badge>
+              ))}
+            {isWrappedUid && (
+              <Badge title="a UID embedded inside another object — created already wrapped, never a standalone object">
+                wrapped
               </Badge>
             )}
             {isStakedSuiType(objType) && <Badge>staked sui</Badge>}
@@ -430,9 +454,13 @@ export function ObjectView({
         <div className="space-y-6">
           <div className="border-danger/40 bg-danger/5 space-y-1.5 border px-4 py-3 font-mono text-xs">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="text-danger font-semibold tracking-wider uppercase">deleted</span>
+              <span className="text-danger font-semibold tracking-wider uppercase">
+                {removal.data && !removal.data.deleted ? 'wrapped' : 'deleted'}
+              </span>
               <span className="text-muted">
-                no longer in the live set. its last known state
+                {removal.data && !removal.data.deleted
+                  ? 'no longer a standalone object — wrapped inside another object. its last known state'
+                  : 'no longer in the live set. its last known state'}
                 {lastVersion != null ? ` (v${lastVersion})` : ''} and transaction history
                 are below.
               </span>
@@ -442,7 +470,7 @@ export function ObjectView({
                 <span className="opacity-60">locating the transaction that removed it…</span>
               ) : removal.data ? (
                 <span className="inline-flex flex-wrap items-center gap-x-1.5">
-                  <span>{removal.data.deleted ? 'deleted in' : 'removed in'}</span>
+                  <span>{removal.data.deleted ? 'deleted in' : 'wrapped in'}</span>
                   <LinkedHash value={removal.data.digest} />
                   {removal.data.timestamp && (
                     <span className="text-muted/70">· {formatTimestamp(removal.data.timestamp)}</span>
@@ -456,6 +484,12 @@ export function ObjectView({
               )}
             </div>
           </div>
+
+          {/* Wrapped (not deleted): resolve WHICH object wraps it now, by
+              scanning the wrapping tx's changed objects for this id. */}
+          {removal.data && !removal.data.deleted && (
+            <WrapperPanel id={value} txDigest={removal.data.digest} />
+          )}
 
           {/* Last known state, recovered by pinning to the final version. */}
           {snapObj ? (
@@ -492,6 +526,10 @@ export function ObjectView({
           <ObjectHistory id={value} currentVersion={lastVersion} />
           <ObjectTransactions id={value} currentVersion={null} removal={removal.data} />
         </div>
+      )}
+
+      {isWrappedUid && wrappedCreation && (
+        <WrappedBody id={value} createdTx={wrappedCreation} />
       )}
 
       {isAddress && (

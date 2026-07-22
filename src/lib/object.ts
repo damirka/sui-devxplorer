@@ -178,10 +178,19 @@ export interface ObjectBounds {
   lastVersion: number | null
   /** The tx that created it (its first version's producing tx). */
   createdTx: string | null
+  /** The earliest transaction whose effects touched this id, from the
+   *  `affectedObject` index. That index records ids that *never materialize as
+   *  objects* too — a UID created already wrapped inside another object has no
+   *  versions but does have this tx (its creation). Non-null with `exists`
+   *  false is therefore the signature of a wrapped UID (vs. a plain account
+   *  address, where both are empty). */
+  firstAffecting: { digest: string; timestamp: string | null } | null
 }
 
 // One aliased query for both ends of the version connection — a minimal node
-// selection (no owner/effects/gas payload the callers don't read here).
+// selection (no owner/effects/gas payload the callers don't read here) — plus
+// the earliest `affectedObject` tx, which classifies a version-less id as a
+// wrapped UID vs. an account address (see `ObjectBounds.firstAffecting`).
 const OBJECT_BOUNDS_QUERY = `
 query ObjectBounds($id: SuiAddress!) {
   first: objectVersions(address: $id, first: 1) {
@@ -189,6 +198,9 @@ query ObjectBounds($id: SuiAddress!) {
   }
   last: objectVersions(address: $id, last: 1) {
     nodes { version }
+  }
+  affecting: transactions(first: 1, filter: { affectedObject: $id }) {
+    nodes { digest effects { timestamp } }
   }
 }
 `
@@ -201,12 +213,19 @@ export async function fetchObjectBounds(
   const { data } = await gqlRequest<{
     first: { nodes: { previousTransaction: { digest: string } | null }[] }
     last: { nodes: { version: number }[] }
+    affecting: {
+      nodes: { digest: string; effects: { timestamp: string | null } | null }[]
+    }
   }>(network, OBJECT_BOUNDS_QUERY, { id }, signal)
   const last = data.last.nodes[0]
+  const affecting = data.affecting.nodes[0]
   return {
     exists: !!last,
     lastVersion: last?.version ?? null,
     createdTx: data.first.nodes[0]?.previousTransaction?.digest ?? null,
+    firstAffecting: affecting
+      ? { digest: affecting.digest, timestamp: affecting.effects?.timestamp ?? null }
+      : null,
   }
 }
 
