@@ -40,7 +40,9 @@ src/
     search.ts             detectSearchKind(), normalizeSuiId(), truncateMiddle()  ← pure, test here
     mvr.ts                Move Registry REST client (names ↔ packages, versions) — not GraphQL
     bookmarks.ts          per-network localStorage bookmark store (useSyncExternalStore) + page identity
-    hotkeys.ts            the hotkey table behind the `?` cheatsheet + the typing guard
+    hotkeys.ts            the hotkey table behind the `?` cheatsheet, the gate + useKeydown
+    storage.ts            guarded, typed localStorage keys (theme, network, bookmarks use it)
+    params.ts             PIN_PARAMS — the view pins links drop and bookmarks keep
     cn.ts                 clsx + tailwind-merge
   theme/                  data-theme on <html>; ThemeProvider + useTheme (split for fast-refresh)
   context/                NetworkProvider — network lives in ?network=, seeded from localStorage
@@ -120,9 +122,13 @@ hex colors in TSX — every colour goes through a token. Theme by setting
   open — keep that guard.
 - **Bookmarks are per network:** stored under `devx:bookmarks:<network>`, and
   only the current network's list is ever shown, so a bookmark never carries a
-  network. Identity is every query param but `network` (`search` normalized
-  via `detectSearchKind`, plus pins like `version`); `createdAt` is epoch ms
-  and rows show it as a relative age.
+  network. Identity is `search` (normalized via `detectSearchKind`) plus the
+  `PIN_PARAMS` (`lib/params.ts`) — nothing else; `createdAt` is epoch ms and
+  rows show it as a relative age.
+- **localStorage goes through `lib/storage.ts`** (`storedString` / `storedText`
+  / `storedJson`): reads are try/catch-guarded (blocked storage throws on read)
+  and validated. Theme persists only an explicit choice and follows the OS
+  until then.
 
 ## Move Registry (MVR): a second data source
 

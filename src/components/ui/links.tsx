@@ -5,6 +5,7 @@ import { Hash } from './Hash'
 import { formatType } from '@/lib/format'
 import { mvrNameForPackageCached } from '@/lib/mvr'
 import { useNetwork } from '@/context/useNetwork'
+import { clearPins } from '@/lib/params'
 
 /**
  * The MVR name assigned to a package id (reverse-resolved, session-cached), or
@@ -30,26 +31,19 @@ function useMvrName(packageId: string | null): string | null {
 
 /**
  * Apply a new `?search=` to `current`, returning fresh params. Drops the pins
- * that belong to the entity being left: `version` (a pinned object version),
+ * that belong to the entity being left (`PIN_PARAMS` in `lib/params.ts`) —
  * unless a new `version` is passed (e.g. opening a dynamic field's value at the
- * version it holds), plus the dashboards' deep-link params (`vtab`, `validator`,
- * `view` on the validators view; `feed` on the live checkpoints view). The single
- * source of truth for "navigate to a new id", shared by {@link useSearchHref}
- * and the search box.
+ * version it holds). The single source of truth for "navigate to a new id",
+ * shared by {@link useSearchHref} and the search box.
  */
 export function withSearch(
   current: URLSearchParams,
   value: string,
   version?: number | null,
 ): URLSearchParams {
-  const next = new URLSearchParams(current)
+  const next = clearPins(new URLSearchParams(current))
   next.set('search', value)
   if (version != null) next.set('version', String(version))
-  else next.delete('version')
-  next.delete('vtab')
-  next.delete('validator')
-  next.delete('view')
-  next.delete('feed')
   return next
 }
 
@@ -66,13 +60,9 @@ export function useSearchHref() {
 export function useValidatorHref() {
   const [params] = useSearchParams()
   return (address: string) => {
-    const next = new URLSearchParams(params)
+    const next = clearPins(new URLSearchParams(params))
     next.set('search', 'validators')
     next.set('validator', address)
-    next.delete('version')
-    next.delete('vtab')
-    next.delete('view')
-    next.delete('feed')
     return `?${next.toString()}`
   }
 }

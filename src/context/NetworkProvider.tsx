@@ -3,16 +3,13 @@ import { useSearchParams } from 'react-router-dom'
 import {
   NetworkContext,
   DEFAULT_NETWORK,
-  NETWORK_STORAGE_KEY,
-  CUSTOM_ENDPOINT_STORAGE_KEY,
+  customEndpointKey,
   isNetwork,
+  networkKey,
   type Network,
 } from './network-context'
 
-const readCustomEndpoint = () =>
-  typeof window !== 'undefined'
-    ? (localStorage.getItem(CUSTOM_ENDPOINT_STORAGE_KEY) ?? '')
-    : ''
+const readCustomEndpoint = () => customEndpointKey.read() ?? ''
 
 /**
  * Network selection is part of the shareable URL (`?network=testnet`). The URL
@@ -24,22 +21,15 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const [searchParams, setSearchParams] = useSearchParams()
 
   const fromUrl = searchParams.get('network')
-  const stored =
-    typeof window !== 'undefined'
-      ? localStorage.getItem(NETWORK_STORAGE_KEY)
-      : null
-
   const network: Network = isNetwork(fromUrl)
     ? fromUrl
-    : isNetwork(stored)
-      ? stored
-      : DEFAULT_NETWORK
+    : (networkKey.read() ?? DEFAULT_NETWORK)
 
   const [customEndpoint, setCustomEndpointState] = useState(readCustomEndpoint)
 
   const setNetwork = useCallback(
     (next: Network) => {
-      localStorage.setItem(NETWORK_STORAGE_KEY, next)
+      networkKey.write(next)
       setSearchParams(
         (prev) => {
           const params = new URLSearchParams(prev)
@@ -56,7 +46,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const setCustomEndpoint = useCallback(
     (url: string) => {
       const trimmed = url.trim()
-      localStorage.setItem(CUSTOM_ENDPOINT_STORAGE_KEY, trimmed)
+      customEndpointKey.write(trimmed)
       setCustomEndpointState(trimmed)
       setNetwork('custom')
     },

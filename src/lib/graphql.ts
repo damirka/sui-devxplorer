@@ -4,7 +4,7 @@
  * library, no cache layer yet: one `fetch`, typed by the caller.
  */
 import {
-  CUSTOM_ENDPOINT_STORAGE_KEY,
+  customEndpointKey,
   type FixedNetwork,
   type Network,
 } from '@/context/network-context'
@@ -21,13 +21,7 @@ const ENDPOINTS: Record<FixedNetwork, string> = {
  * request); it falls back to mainnet if none is set.
  */
 export function endpointFor(network: Network): string {
-  if (network === 'custom') {
-    const url =
-      typeof window !== 'undefined'
-        ? localStorage.getItem(CUSTOM_ENDPOINT_STORAGE_KEY)
-        : null
-    return url || ENDPOINTS.mainnet
-  }
+  if (network === 'custom') return customEndpointKey.read() || ENDPOINTS.mainnet
   return ENDPOINTS[network]
 }
 

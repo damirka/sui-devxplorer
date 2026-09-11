@@ -1,14 +1,17 @@
 import { useSyncExternalStore } from 'react'
 import type { Network } from '@/context/network-context'
 import { formatAddress, formatType } from './format'
+import { isPinParam } from './params'
+import { onStorageChange, storedKey, type StoredKey } from './storage'
 import { detectSearchKind, truncateMiddle, type SearchKind } from './search'
 
 /**
  * Bookmarks: per-browser, per-network lists of explorer pages worth coming back
  * to, kept in localStorage (no backend) under `devx:bookmarks:<network>`. A
  * page is identified the way the app is driven — by its query params: `search`
- * plus any view pins (`version`, `vtab`, `validator`, `view`) — so a bookmark
- * reopens exactly the view that was marked. The network is not part of a
+ * plus the view pins (`PIN_PARAMS`; nothing else, so a stray `utm_*` can't
+ * make a page look unbookmarked) — so a bookmark reopens exactly the view that
+ * was marked. The network is not part of a
  * bookmark: each network keeps its own list, and only the current network's
  * list is ever shown.
  *
@@ -21,7 +24,7 @@ import { detectSearchKind, truncateMiddle, type SearchKind } from './search'
 
 export const BOOKMARKS_STORAGE_PREFIX = 'devx:bookmarks:'
 
-/** A page's query params minus `network`: `search` plus any view pins. */
+/** A page's identity: `search` plus any of the view pins (`PIN_PARAMS`). */
 export type PageParams = Record<string, string>
 
 export interface Bookmark {
@@ -54,11 +57,10 @@ export function pageKey(params: PageParams): string {
 export function pageParams(searchParams: URLSearchParams): PageParams | null {
   const search = searchParams.get('search')?.trim()
   if (!search) return null
-  const params: PageParams = {}
+  const params: PageParams = { search }
   for (const [k, v] of searchParams) {
-    if (k !== 'network' && v) params[k] = v
+    if (isPinParam(k) && v) params[k] = v
   }
-  params.search = search
   return params
 }
 
@@ -118,9 +120,27 @@ export function displayTarget(search: string): string {
 
 const cache = new Map<Network, Bookmark[]>()
 const listeners = new Set<() => void>()
+const keys = new Map<Network, StoredKey<Bookmark[]>>()
 
-function storageKey(network: Network): string {
-  return BOOKMARKS_STORAGE_PREFIX + network
+/** One network's list; a malformed entry is dropped, the rest kept. */
+function keyFor(network: Network): StoredKey<Bookmark[]> {
+  let k = keys.get(network)
+  if (!k) {
+    k = storedKey<Bookmark[]>(
+      BOOKMARKS_STORAGE_PREFIX + network,
+      (raw) => {
+        try {
+          const v: unknown = JSON.parse(raw)
+          return Array.isArray(v) ? v.filter(isBookmark) : null
+        } catch {
+          return null
+        }
+      },
+      (v) => JSON.stringify(v),
+    )
+    keys.set(network, k)
+  }
+  return k
 }
 
 /** Shape-check one persisted entry — a corrupt or foreign value is dropped. */
@@ -139,20 +159,10 @@ function isBookmark(v: unknown): v is Bookmark {
   )
 }
 
-function load(network: Network): Bookmark[] {
-  try {
-    const raw = localStorage.getItem(storageKey(network))
-    const parsed: unknown = raw ? JSON.parse(raw) : []
-    return Array.isArray(parsed) ? parsed.filter(isBookmark) : []
-  } catch {
-    return []
-  }
-}
-
 function getSnapshot(network: Network): Bookmark[] {
   let list = cache.get(network)
   if (!list) {
-    list = load(network)
+    list = keyFor(network).read() ?? []
     cache.set(network, list)
   }
   return list
@@ -160,28 +170,24 @@ function getSnapshot(network: Network): Bookmark[] {
 
 function commit(network: Network, next: Bookmark[]): void {
   cache.set(network, next)
-  try {
-    localStorage.setItem(storageKey(network), JSON.stringify(next))
-  } catch {
-    // Quota / private mode: keep the in-memory list for this session.
-  }
+  keyFor(network).write(next)
   for (const l of listeners) l()
 }
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener)
   // Another tab wrote a list: drop that cache so the next read reloads it.
-  const onStorage = (e: StorageEvent) => {
-    if (e.key === null) cache.clear()
-    else if (e.key.startsWith(BOOKMARKS_STORAGE_PREFIX)) {
-      cache.delete(e.key.slice(BOOKMARKS_STORAGE_PREFIX.length) as Network)
-    } else return
-    listener()
-  }
-  window.addEventListener('storage', onStorage)
+  const stop = onStorageChange(
+    (k) => k === null || k.startsWith(BOOKMARKS_STORAGE_PREFIX),
+    (k) => {
+      if (k === null) cache.clear()
+      else cache.delete(k.slice(BOOKMARKS_STORAGE_PREFIX.length) as Network)
+      listener()
+    },
+  )
   return () => {
     listeners.delete(listener)
-    window.removeEventListener('storage', onStorage)
+    stop()
   }
 }
 
