@@ -1,5 +1,7 @@
 import { useState, type FormEvent, type KeyboardEvent } from 'react'
+import { KeyHints } from '@/components/ui/KeyHints'
 import { Modal } from '@/components/ui/Modal'
+import { PromptInput } from '@/components/ui/PromptInput'
 import type { Network } from '@/context/network-context'
 import {
   addBookmark,
@@ -13,7 +15,6 @@ import {
 } from '@/lib/bookmarks'
 import { formatAgo } from '@/lib/format'
 import { useNow } from '@/lib/useNow'
-import { KeyHints } from '@/components/ui/KeyHints'
 import { KindTag } from './bits'
 
 /**
@@ -58,6 +59,7 @@ export function BookmarkEditModal({
           </button>
         )
       }
+      footer={<KeyHints items={[['↵', 'save'], ['esc', 'cancel']]} className="ml-auto" />}
     >
       {/* Mounted fresh on every open, so the draft starts from the live label. */}
       {open && (
@@ -123,30 +125,16 @@ function EditForm({
         )}
       </div>
 
-      <div className="relative">
-        <span
-          aria-hidden
-          className="text-primary pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm select-none"
-        >
-          ❯
-        </span>
-        {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
-        <input
-          autoFocus
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={onKeyDown}
-          // Rename mode: the current name comes selected so typing replaces it.
-          onFocus={(e) => e.currentTarget.select()}
-          placeholder={suggestion}
-          spellCheck={false}
-          autoComplete="off"
-          aria-label="Bookmark name"
-          className="input py-2.5 pl-9 text-sm"
-        />
-      </div>
-
-      <KeyHints items={[['↵', 'save'], ['esc', 'cancel']]} />
+      <PromptInput
+        autoFocus
+        label="Bookmark name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={onKeyDown}
+        // Rename mode: the current name comes selected so typing replaces it.
+        onFocus={(e) => e.currentTarget.select()}
+        placeholder={suggestion}
+      />
     </form>
   )
 }

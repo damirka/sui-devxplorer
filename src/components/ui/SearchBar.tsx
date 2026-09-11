@@ -9,6 +9,8 @@ import {
 } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { detectSearchKind, type SearchKind, type SearchResultKind } from '@/lib/search'
+import { KeyHints } from './KeyHints'
+import { PromptInput } from './PromptInput'
 import { withSearch } from './links'
 import { cn } from '@/lib/cn'
 import { cycle, isEditableTarget, isModalOpen, useKeydown } from '@/lib/hotkeys'
@@ -26,6 +28,7 @@ interface SearchBarProps {
 }
 
 const HERO_TEXT = 'font-mono text-2xl font-medium tracking-tight sm:text-3xl'
+const SEARCH_LABEL = 'Search the Sui network'
 
 /** One worked example per searchable kind — clickable, and highlighted live as
  *  the typed input resolves to that kind. */
@@ -39,6 +42,9 @@ const HINTS: { example: string; label: string; kind: SearchKind }[] = [
   { example: 'checkpoints', label: 'liveness', kind: 'checkpoints' },
   { example: 'validators', label: 'validators', kind: 'validators' },
 ]
+
+/** The ↑ ↓ ↵ affordance in the dropdown header — the rows are keyboard-navigable. */
+const NAV_KEYS = ['↑', '↓', '↵']
 
 /** Human label for the kind a live input resolves to (drives the echo line). */
 const KIND_LABEL: Partial<Record<SearchKind, string>> = {
@@ -263,7 +269,7 @@ export function SearchBar({ variant = 'hero', autoFocus, hints, onNavigate }: Se
       setFocused(false)
       setActiveHint(-1)
     },
-    'aria-label': 'Search the Sui network',
+    'aria-label': SEARCH_LABEL,
   }
 
   // Live hint on the right: typing → ↵ · idle → press /
@@ -359,22 +365,13 @@ export function SearchBar({ variant = 'hero', autoFocus, hints, onNavigate }: Se
   }
 
   return (
-    <form onSubmit={submit} role="search" className="relative w-full max-w-md">
-      <span
-        aria-hidden
-        className="text-primary pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 font-mono text-sm select-none"
-      >
-        ❯
-      </span>
-      {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
-      <input
+    <form onSubmit={submit} role="search" className="w-full max-w-md">
+      <PromptInput
         {...sharedInputProps}
+        label={SEARCH_LABEL}
         placeholder="search pkgs, txs, objects on sui"
-        className="input py-2.5 pr-12 pl-9 text-sm"
+        trailing={affordance}
       />
-      <div className="absolute top-1/2 right-3 flex -translate-y-1/2 items-center gap-2">
-        {affordance}
-      </div>
     </form>
   )
 }
@@ -419,12 +416,12 @@ function HintsDropdown({
           ) : (
             <span className="text-muted">unrecognised — keep typing</span>
           )}
-          <NavKeys />
+          <KeyHints items={NAV_KEYS} gap="tight" />
         </div>
       ) : (
         <div className="border-line mb-3 flex items-center justify-between gap-3 border-b pb-3">
           <span className="panel-label">try</span>
-          <NavKeys />
+          <KeyHints items={NAV_KEYS} gap="tight" />
         </div>
       )}
 
@@ -465,18 +462,6 @@ function HintsDropdown({
         })}
       </div>
     </div>
-  )
-}
-
-/** The ↑ ↓ ↵ affordance shown in the dropdown header — teaches that the rows are
- *  keyboard-navigable. */
-function NavKeys() {
-  return (
-    <span className="text-muted inline-flex items-center gap-1.5">
-      <kbd className="kbd">↑</kbd>
-      <kbd className="kbd">↓</kbd>
-      <kbd className="kbd">↵</kbd>
-    </span>
   )
 }
 

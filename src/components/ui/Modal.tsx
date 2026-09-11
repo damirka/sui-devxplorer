@@ -11,6 +11,9 @@ interface ModalProps {
   title?: ReactNode
   /** Extra header controls, placed left of the close button. */
   actions?: ReactNode
+  /** Footer strip below the scrolling body — a status readout and/or a
+   *  `KeyHints` legend (put `ml-auto` on a lone legend to right-align it). */
+  footer?: ReactNode
   children: ReactNode
   className?: string
 }
@@ -22,7 +25,7 @@ interface ModalProps {
  * when closed — but the component stays mounted, so a parent can keep modal
  * state (and any retained content) alive across re-renders.
  */
-export function Modal({ open, onClose, title, actions, children, className }: ModalProps) {
+export function Modal({ open, onClose, title, actions, footer, children, className }: ModalProps) {
   useEffect(() => {
     if (!open) return
     function onKey(e: globalThis.KeyboardEvent) {
@@ -76,6 +79,11 @@ export function Modal({ open, onClose, title, actions, children, className }: Mo
           </button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        {footer && (
+          <footer className="border-line flex items-center justify-between gap-3 border-t px-4 py-2">
+            {footer}
+          </footer>
+        )}
       </div>
     </div>,
     document.body,

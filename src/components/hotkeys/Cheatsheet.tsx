@@ -9,8 +9,8 @@ import { HOTKEYS, hotkeyAllowed, useKeydown } from '@/lib/hotkeys'
  * `?` toggles it (ignored while typing in a field), esc closes, and a `?`
  * icon button at the header's right edge — the same square as the theme
  * toggle beside it — is the one piece of chrome that points at the keyboard
- * layer. Desktop only: the key hides below `sm` and the hotkey is
- * inert there — no keyboard, nothing to list.
+ * layer. Desktop only: the key hides below `sm` and the hotkey is inert there
+ * — no keyboard, nothing to list.
  */
 export function Cheatsheet() {
   const [open, setOpen] = useState(false)
@@ -43,7 +43,13 @@ export function Cheatsheet() {
         </span>
       </Button>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="keyboard" className="max-w-lg">
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="keyboard"
+        className="max-w-lg"
+        footer={<KeyHints items={[['?', 'toggle'], ['esc', 'close']]} className="ml-auto" />}
+      >
         <div className="flex flex-col gap-5 p-4">
           {HOTKEYS.map((section) => (
             <section key={section.title}>
@@ -54,12 +60,8 @@ export function Cheatsheet() {
               <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1.5 font-mono text-xs">
                 {section.rows.map((row) => (
                   <div key={row.does} className="contents">
-                    <dt className="flex flex-wrap items-center gap-1">
-                      {row.keys.map((k) => (
-                        <kbd key={k} className="kbd">
-                          {k}
-                        </kbd>
-                      ))}
+                    <dt>
+                      <KeyHints items={row.keys} gap="tight" />
                     </dt>
                     <dd className="text-muted">{row.does}</dd>
                   </div>
@@ -67,9 +69,6 @@ export function Cheatsheet() {
               </dl>
             </section>
           ))}
-        </div>
-        <div className="border-line flex items-center justify-end border-t px-4 py-2">
-          <KeyHints items={[['?', 'toggle'], ['esc', 'close']]} />
         </div>
       </Modal>
     </>
