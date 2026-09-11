@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
 import { Hash } from './Hash'
 import { useSearchHref } from './links'
 import { useNetwork } from '@/context/useNetwork'
 import { atName, defaultSuinsNameCached } from '@/lib/suins'
+import { useResolved } from '@/lib/useResolved'
 
 /**
  * The default SuiNS name of an address (its `.sui` domain), resolved through the
@@ -13,22 +13,11 @@ import { atName, defaultSuinsNameCached } from '@/lib/suins'
  */
 export function useSuinsName(address: string | null, known?: string | null): string | null {
   const { network } = useNetwork()
-  const [name, setName] = useState<string | null>(known ?? null)
-  useEffect(() => {
-    if (known !== undefined || !address) {
-      setName(known ?? null)
-      return
-    }
-    let active = true
-    setName(null)
-    defaultSuinsNameCached(network, address).then((n) => {
-      if (active) setName(n)
-    })
-    return () => {
-      active = false
-    }
-  }, [network, address, known])
-  return name
+  const resolved = useResolved(
+    () => (known === undefined && address ? defaultSuinsNameCached(network, address) : null),
+    [network, address, known],
+  )
+  return known !== undefined ? (known ?? null) : resolved
 }
 
 /**

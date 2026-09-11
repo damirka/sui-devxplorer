@@ -4,7 +4,7 @@ import { Hash } from '@/components/ui/Hash'
 import { RowIndex } from '@/components/ui/RowIndex'
 import { netGasUsed } from '@/lib/gas'
 import { tipLagMs, type CheckpointSummary } from '@/lib/checkpoint'
-import { formatAge, formatCount, formatSui, formatTimestamp } from '@/lib/format'
+import { formatAgeAgo, formatCount, formatSui, formatTimestamp } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { CheckpointTxs } from './CheckpointTxs'
 
@@ -46,7 +46,7 @@ export function CheckpointRow({
           #{cp.sequenceNumber.toLocaleString()}
         </span>
         <span className="text-muted shrink-0 tabular-nums">
-          {lag == null ? '—' : `${formatAge(lag)} ago`}
+          {formatAgeAgo(lag)}
         </span>
         <span className="text-muted ml-auto inline-flex shrink-0 items-center gap-x-4 tabular-nums">
           <span className="inline-flex items-center gap-1" title="validators that signed">

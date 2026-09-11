@@ -193,6 +193,12 @@ export function formatAgo(ms: number): string {
   return `${Math.floor(d / 7)}w ago`
 }
 
+/** A live age of a past moment for a feed row — `1m 03s ago`, `—` when
+ *  unknown. `formatAgo` is the coarse cousin for static lists. */
+export function formatAgeAgo(ms: number | null | undefined): string {
+  return ms == null ? '—' : `${formatAge(ms)} ago`
+}
+
 /**
  * A next-epoch countdown from the milliseconds remaining: `—` when unknown,
  * `~now` at/after the boundary, else a `~`-prefixed {@link formatAge} (`~4h 12m`).

@@ -1,10 +1,11 @@
-import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { CopyButton } from './CopyButton'
 import { Hash } from './Hash'
 import { formatType } from '@/lib/format'
 import { mvrNameForPackageCached } from '@/lib/mvr'
 import { useNetwork } from '@/context/useNetwork'
+import { useResolved } from '@/lib/useResolved'
 import { clearPins } from '@/lib/params'
 
 /**
@@ -14,19 +15,10 @@ import { clearPins } from '@/lib/params'
  */
 function useMvrName(packageId: string | null): string | null {
   const { network } = useNetwork()
-  const [name, setName] = useState<string | null>(null)
-  useEffect(() => {
-    setName(null)
-    if (!packageId) return
-    let active = true
-    mvrNameForPackageCached(network, packageId).then((n) => {
-      if (active) setName(n)
-    })
-    return () => {
-      active = false
-    }
-  }, [network, packageId])
-  return name
+  return useResolved(
+    () => (packageId ? mvrNameForPackageCached(network, packageId) : null),
+    [network, packageId],
+  )
 }
 
 /**

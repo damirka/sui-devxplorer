@@ -14,7 +14,7 @@ import { tipLagMs } from '@/lib/checkpoint'
 import { netGasUsed } from '@/lib/gas'
 import { cn } from '@/lib/cn'
 import { truncateMiddle } from '@/lib/search'
-import { formatAge, formatSui, formatTimestamp } from '@/lib/format'
+import { formatAgeAgo, formatSui, formatTimestamp } from '@/lib/format'
 import {
   fetchTransaction,
   type MoveFn,
@@ -77,7 +77,7 @@ export function TransactionFeedRow({
           {truncateMiddle(tx.digest)}
         </span>
         <span className="text-muted shrink-0 tabular-nums">
-          {lag == null ? '—' : `${formatAge(lag)} ago`}
+          {formatAgeAgo(lag)}
         </span>
         {tx.sender && (
           <span
