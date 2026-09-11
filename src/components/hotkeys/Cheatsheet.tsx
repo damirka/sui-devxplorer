@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { KeyHints } from '@/components/ui/KeyHints'
 import { Modal } from '@/components/ui/Modal'
-import { HOTKEYS, isDesktop, isEditableTarget } from '@/lib/hotkeys'
+import { HOTKEYS, hotkeyAllowed } from '@/lib/hotkeys'
 
 /**
  * The `?` popup: every hotkey on the site, from one table (`lib/hotkeys.ts`).
@@ -18,13 +18,19 @@ export function Cheatsheet() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key !== '?' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
-      if (!isDesktop() || isEditableTarget(e.target)) return
+      // While we're the open popup the gate says no — but `?` still closes us.
+      if (open) {
+        e.preventDefault()
+        setOpen(false)
+        return
+      }
+      if (!hotkeyAllowed(e)) return
       e.preventDefault()
-      setOpen((v) => !v)
+      setOpen(true)
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [])
+  }, [open])
 
   return (
     <>

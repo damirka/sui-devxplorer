@@ -27,6 +27,34 @@ export function shiftedLetter(e: KeyboardEvent): string | null {
   return null
 }
 
+// ─── the gate ───────────────────────────────────────────────────────────────
+
+let openModals = 0
+
+/** Called by `Modal` while it is open; returns the matching release. Any open
+ *  modal suspends every bare global hotkey, so keys can't stack popups or act
+ *  on the page underneath. */
+export function registerOpenModal(): () => void {
+  openModals++
+  return () => {
+    openModals--
+  }
+}
+
+export function isModalOpen(): boolean {
+  return openModals > 0
+}
+
+/**
+ * The one check every global hotkey runs first: not a key repeat, on a
+ * desktop viewport, no popup open, and not typing in a field. A hotkey that
+ * must work *inside* its own popup (the cheatsheet's `?` toggle) handles that
+ * case before asking.
+ */
+export function hotkeyAllowed(e: KeyboardEvent): boolean {
+  return !e.repeat && isDesktop() && !isModalOpen() && !isEditableTarget(e.target)
+}
+
 /** Tailwind's `sm` breakpoint. The keyboard layer is desktop-only — below it
  *  there's no keyboard to press these with, so hotkeys and the `?` entry point
  *  stay off. */

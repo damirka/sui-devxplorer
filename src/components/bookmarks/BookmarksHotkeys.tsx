@@ -8,7 +8,7 @@ import {
   type Bookmark,
   type PageParams,
 } from '@/lib/bookmarks'
-import { isDesktop, isEditableTarget, shiftedLetter } from '@/lib/hotkeys'
+import { hotkeyAllowed, shiftedLetter } from '@/lib/hotkeys'
 import { BookmarkEditModal } from './BookmarkEditModal'
 import { BookmarksListModal } from './BookmarksListModal'
 
@@ -23,8 +23,8 @@ interface Editing {
 /**
  * The headless owner of the two bookmark hotkeys, vim style: `b` marks the
  * page you're on (a popup asks for a name), `B` opens the jump list for the
- * current network. Both are ignored while typing in a field or while a popup
- * is up. Renders nothing but the popups — there's deliberately no chrome for
+ * current network. Both go through `hotkeyAllowed` (no popup open, not typing,
+ * desktop). Renders nothing but the popups — there's deliberately no chrome for
  * this; the `?` cheatsheet is where the keys are listed. Desktop only: inert
  * below the `sm` breakpoint.
  */
@@ -50,8 +50,7 @@ export function BookmarksHotkeys() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (open || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
-      if (!isDesktop() || isEditableTarget(e.target)) return
+      if (!hotkeyAllowed(e) || e.ctrlKey || e.metaKey || e.altKey) return
       if (shiftedLetter(e) === 'B') {
         e.preventDefault()
         setOpen('list')
@@ -62,7 +61,7 @@ export function BookmarksHotkeys() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [open, canBookmark, editCurrent])
+  }, [canBookmark, editCurrent])
 
   const closeAll = useCallback(() => setOpen(null), [])
   const closeEdit = useCallback(

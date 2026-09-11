@@ -11,6 +11,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { detectSearchKind, type SearchKind, type SearchResultKind } from '@/lib/search'
 import { withSearch } from './links'
 import { cn } from '@/lib/cn'
+import { isEditableTarget, isModalOpen } from '@/lib/hotkeys'
 
 interface SearchBarProps {
   variant?: 'hero' | 'compact'
@@ -112,17 +113,13 @@ export function SearchBar({ variant = 'hero', autoFocus, hints, onNavigate }: Se
   }, [value, syncScroll])
 
   // Dev muscle memory: `/` or Tab focuses the search from anywhere (unless
-  // already typing in a field).
+  // already typing in a field, or a popup is up — it would focus us underneath).
   useEffect(() => {
     function onKey(e: globalThis.KeyboardEvent) {
       if (e.key !== '/' && e.key !== 'Tab') return
       const el = inputRef.current
       if (!el || el.offsetParent === null) return // skip hidden instances
-      const active = document.activeElement as HTMLElement | null
-      const tag = active?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || active?.isContentEditable) {
-        return
-      }
+      if (isModalOpen() || isEditableTarget(document.activeElement)) return
       e.preventDefault()
       el.focus()
     }

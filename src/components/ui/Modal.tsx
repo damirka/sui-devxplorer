@@ -2,6 +2,7 @@ import { useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { registerOpenModal } from '@/lib/hotkeys'
 
 interface ModalProps {
   open: boolean
@@ -16,7 +17,8 @@ interface ModalProps {
 
 /**
  * A centered, portal-rendered modal over a blurred backdrop. Escape and a
- * backdrop click close it; body scroll is locked while open. Renders nothing
+ * backdrop click close it; body scroll is locked and the global hotkeys are
+ * suspended while open. Renders nothing
  * when closed — but the component stays mounted, so a parent can keep modal
  * state (and any retained content) alive across re-renders.
  */
@@ -32,9 +34,12 @@ export function Modal({ open, onClose, title, actions, children, className }: Mo
     document.addEventListener('keydown', onKey)
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
+    // Suspend the global hotkeys (`/`, `b`, `B`, `M`…) while we're up.
+    const release = registerOpenModal()
     return () => {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = prevOverflow
+      release()
     }
   }, [open, onClose])
 
