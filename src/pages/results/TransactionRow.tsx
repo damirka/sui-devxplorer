@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react'
 import { Fuel } from 'lucide-react'
 import { AddressLink } from '@/components/ui/AddressLink'
-import { RowIndex } from '@/components/ui/RowIndex'
 import { LinkedHash } from '@/components/ui/links'
 import { formatSui, formatTimestamp } from '@/lib/format'
 import { cn } from '@/lib/cn'
+import { MenuRow } from '@/components/ui/MenuRow'
 
 /** A transaction's execution status as a terminal word — green for success,
  *  alarm-red for failure, `—` when unknown. Pushed to the right of its row. */
@@ -62,8 +62,7 @@ export function TransactionRow({
   // Always wrap — it only breaks to a second line when the row can't fit (mobile),
   // so the columns never force a page-wide horizontal scroll.
   return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
-      <RowIndex n={index} />
+    <MenuRow n={index} wrap>
       <span className="inline-flex w-[7rem] shrink-0">
         {digest ? <LinkedHash value={digest} /> : <span className="text-muted">—</span>}
       </span>
@@ -86,6 +85,6 @@ export function TransactionRow({
         </span>
       )}
       <TxStatus status={status} />
-    </li>
+    </MenuRow>
   )
 }

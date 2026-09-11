@@ -1,6 +1,5 @@
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Pager, useCursorPager, shouldShowPager } from '@/components/ui/Pager'
-import { RowIndex } from '@/components/ui/RowIndex'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { LinkedHash, EntityLink } from '@/components/ui/links'
 import { Muted } from '@/components/ui/Field'
@@ -8,6 +7,7 @@ import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
 import { fetchMvrDependents, reverseResolveMvrBulk, mvrSupported } from '@/lib/mvr'
 import { formatCount } from '@/lib/format'
+import { MenuRow } from '@/components/ui/MenuRow'
 
 /**
  * The packages that depend on this one, from the MVR API
@@ -79,8 +79,7 @@ export function PackageDependents({ packageId }: { packageId: string }) {
             {rows.map((d, i) => {
               const name = mvrNames[d.packageId]
               return (
-                <li key={`${d.packageId}-${i}`} className="flex items-center gap-3 py-2.5">
-                  <RowIndex n={pager.pageIndex * pager.pageSize + i + 1} />
+                <MenuRow key={`${d.packageId}-${i}`} n={pager.pageIndex * pager.pageSize + i + 1}>
                   <span className="flex min-w-0 flex-1 items-center gap-2.5">
                     {name ? <EntityLink id={name} /> : <LinkedHash value={d.packageId} />}
                     {d.totalCalls > 0 && (
@@ -90,7 +89,7 @@ export function PackageDependents({ packageId }: { packageId: string }) {
                     )}
                   </span>
                   {name && <LinkedHash value={d.packageId} />}
-                </li>
+                </MenuRow>
               )
             })}
           </ul>

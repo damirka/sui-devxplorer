@@ -3,9 +3,9 @@ import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Hash } from '@/components/ui/Hash'
 import { Badge } from '@/components/ui/Badge'
-import { RowIndex } from '@/components/ui/RowIndex'
 import { Field } from '@/components/ui/Field'
 import type { MultisigInfo, SignerScheme } from '@/lib/transaction'
+import { MenuRow } from '@/components/ui/MenuRow'
 
 /**
  * How an address authenticates, recovered from a transaction it signed. Sui
@@ -82,11 +82,7 @@ function Committee({ info }: { info: MultisigInfo }) {
       {open && (
         <ul className="divide-line divide-y font-mono text-xs">
           {info.members.map((m, i) => (
-            <li
-              key={`${m.publicKey ?? m.scheme}-${i}`}
-              className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5"
-            >
-              <RowIndex n={i + 1} />
+            <MenuRow key={`${m.publicKey ?? m.scheme}-${i}`} n={i + 1} wrap>
               <Badge tone="muted">{m.scheme}</Badge>
               {m.publicKey ? (
                 <Hash value={m.publicKey} className="min-w-0 flex-1" />
@@ -96,7 +92,7 @@ function Committee({ info }: { info: MultisigInfo }) {
               <span className="text-muted shrink-0" title="vote weight">
                 weight {m.weight}
               </span>
-            </li>
+            </MenuRow>
           ))}
         </ul>
       )}

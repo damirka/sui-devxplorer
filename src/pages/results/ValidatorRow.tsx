@@ -13,6 +13,7 @@ import { formatCount, formatNumber, formatSui, formatSuiCompact, formatTokenAmou
 import { cn } from '@/lib/cn'
 import { ADMISSION, isGasOutlier, type ValidatorSummary, type ValidatorView } from '@/lib/validators'
 import { StakeBreakdown } from './StakeBreakdown'
+import { menuRowClass } from '@/components/ui/MenuRow'
 
 /** Basis points → a trimmed percentage label: `800` → `8%`, `13` → `0.13%`. */
 function pct(bps: number): string {
@@ -206,7 +207,7 @@ export function ValidatorRow({
         replace
         aria-expanded={open}
         className={cn(
-          'group flex w-full flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-left transition-colors',
+          menuRowClass({ wrap: true, className: 'group w-full text-left transition-colors' }),
           status?.tone === 'danger'
             ? 'bg-danger/10 hover:bg-danger/20'
             : status?.tone === 'warning'

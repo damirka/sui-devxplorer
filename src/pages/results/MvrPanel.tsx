@@ -14,7 +14,7 @@ import {
 } from '@/lib/mvr'
 import { normalizeSuiId } from '@/lib/search'
 import { cn } from '@/lib/cn'
-import { RowIndex } from '@/components/ui/RowIndex'
+import { MenuRow } from '@/components/ui/MenuRow'
 
 /**
  * The Move Registry identity of a package: the `@namespace/app` name assigned
@@ -157,14 +157,13 @@ function VersionsList({
           const isViewing = v.packageId.toLowerCase() === viewing
           const isLatest = v.version === latest
           return (
-            <li key={v.version} className="flex items-center gap-3 py-2.5">
-              <RowIndex n={v.version} />
+            <MenuRow key={v.version} n={v.version}>
               <LinkedHash value={v.packageId} />
               {isViewing && <span className="text-primary">· viewing</span>}
               {isLatest && !isViewing && (
                 <span className="text-muted">· latest</span>
               )}
-            </li>
+            </MenuRow>
           )
         })}
       </ul>

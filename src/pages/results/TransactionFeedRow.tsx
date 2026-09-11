@@ -23,6 +23,7 @@ import {
   type TxListItem,
 } from '@/lib/transaction'
 import { TxStatus } from './TransactionRow'
+import { MenuRow, menuRowClass } from '@/components/ui/MenuRow'
 
 /**
  * One transaction in the live feed — a summary line (digest, age, sender, the
@@ -57,7 +58,7 @@ export function TransactionFeedRow({
     <li>
       <div
         onClick={onToggle}
-        className="hover:bg-surface-2 flex w-full cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 py-2.5 transition-colors"
+        className={menuRowClass({ wrap: true, hover: true, className: 'w-full cursor-pointer' })}
       >
         {/* No onClick of its own: a keyboard activation dispatches a click that
             bubbles to the line, so one handler serves mouse and keyboard. */}
@@ -224,10 +225,9 @@ function TransactionSummary({ tx }: { tx: SuiTransaction }) {
           ptb.commands.nodes.length > 0 ? (
             <ol className="divide-line divide-y font-mono text-xs">
               {ptb.commands.nodes.map((cmd, i) => (
-                <li key={i} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
-                  <RowIndex n={i} />
+                <MenuRow key={i} n={i} wrap className="py-2">
                   <CommandSummary cmd={cmd} />
-                </li>
+                </MenuRow>
               ))}
             </ol>
           ) : (

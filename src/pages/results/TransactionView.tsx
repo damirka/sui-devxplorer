@@ -61,6 +61,7 @@ import {
   type ProgramNames,
 } from '@/lib/program'
 import { ResultHeader } from './ResultHeader'
+import { MenuRow } from '@/components/ui/MenuRow'
 
 /** Variable names for the PTB's object inputs (`coin_sui`, `kiosk`, …) and
  * command results — so `Input(ix)` / `Result(cmd)` arguments render by name
@@ -308,12 +309,12 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
                 (ptb.inputs.nodes.length > 0 ? (
                   <ol className="divide-line mt-3 divide-y font-mono text-xs">
                     {ptb.inputs.nodes.map((input, i) => (
-                      <li key={i} className="flex gap-3 py-2.5">
+                      <MenuRow key={i} className="items-stretch">
                         <span className="text-secondary w-16 shrink-0">input{i}</span>
                         <div className="min-w-0 flex-1">
                           <InputValue input={input} />
                         </div>
-                      </li>
+                      </MenuRow>
                     ))}
                   </ol>
                 ) : (
@@ -1433,7 +1434,7 @@ function BalanceChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) 
               ? formatTokenAmount(n.amount, m.decimals, m.symbol)
               : rawAmount(n.amount)
             return (
-              <li key={i} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
+              <MenuRow key={i} wrap className="justify-between gap-2">
                 <span className="flex items-center gap-2">
                   {n.owner ? <LinkedHash value={n.owner.address} /> : <Muted>—</Muted>}
                   {n.coinType && (
@@ -1447,7 +1448,7 @@ function BalanceChanges({ fx }: { fx: NonNullable<SuiTransaction['effects']> }) 
                   {positive ? '+' : ''}
                   {amount}
                 </span>
-              </li>
+              </MenuRow>
             )
           })}
         </ul>

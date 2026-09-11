@@ -4,7 +4,6 @@ import { AtSign, Coins, Images, KeyRound, Loader2, Lock, Package, Stamp, X } fro
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Pager, usePagedList } from '@/components/ui/Pager'
 import { DataList } from '@/components/ui/DataList'
-import { RowIndex } from '@/components/ui/RowIndex'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorText } from '@/components/ui/ErrorText'
@@ -45,6 +44,7 @@ import {
   useUpgradeCapPackageNames,
   UpgradeCapRow,
 } from './OwnedUpgradeCaps'
+import { MenuRow } from '@/components/ui/MenuRow'
 
 /** The top-level struct name of a type repr — the base before any generics, so
  * `0x2::coin::Coin<0x..::x::FooCap>` → `Coin`, `0x..::m::AdminCap<T>` → `AdminCap`. */
@@ -292,8 +292,7 @@ function OwnedScanRow({
   trailing?: ReactNode
 }) {
   return (
-    <li className="flex items-start gap-3 py-2.5">
-      <RowIndex n={index} />
+    <MenuRow n={index} top>
       <span className="shrink-0">
         <LinkedHash value={address} />
       </span>
@@ -304,7 +303,7 @@ function OwnedScanRow({
         </span>
       )}
       {trailing}
-    </li>
+    </MenuRow>
   )
 }
 
@@ -701,11 +700,7 @@ function OwnedList({
                 scroll
               >
                 {(p, i) => (
-                  <li
-                    key={p.address}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5"
-                  >
-                    <RowIndex n={i + 1} />
+                  <MenuRow key={p.address} n={i + 1} wrap>
                     <LinkedHash value={p.address} />
                     <span className="text-muted shrink-0" title="is publisher for">
                       →
@@ -718,7 +713,7 @@ function OwnedList({
                     {p.moduleName && (
                       <span className="text-muted shrink-0">· {p.moduleName}</span>
                     )}
-                  </li>
+                  </MenuRow>
                 )}
               </DataList>
             ) : showStaked ? (
@@ -732,11 +727,7 @@ function OwnedList({
                 {(s, i) => {
                   const validator = s.poolId ? poolToValidator?.get(s.poolId) : null
                   return (
-                    <li
-                      key={s.address}
-                      className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5"
-                    >
-                      <RowIndex n={i + 1} />
+                    <MenuRow key={s.address} n={i + 1} wrap>
                       <LinkedHash value={s.address} />
                       <Badge className="shrink-0">staked sui</Badge>
                       <StakeValidator
@@ -750,7 +741,7 @@ function OwnedList({
                       >
                         {formatSui(s.principal)}
                       </span>
-                    </li>
+                    </MenuRow>
                   )
                 }}
               </DataList>
@@ -765,8 +756,7 @@ function OwnedList({
                 {(o, i) => {
                   const e = suinsExpiry(o.expirationMs)
                   return (
-                    <li key={o.address} className="flex items-center gap-3 py-2.5">
-                      <RowIndex n={i + 1} />
+                    <MenuRow key={o.address} n={i + 1}>
                       <LinkedHash value={o.address} />
                       {o.domain && (
                         <span className="text-text min-w-0 truncate">{o.domain}</span>
@@ -780,7 +770,7 @@ function OwnedList({
                       >
                         {e.expired ? `expired ${e.text}` : e.text}
                       </span>
-                    </li>
+                    </MenuRow>
                   )
                 }}
               </DataList>
@@ -819,8 +809,7 @@ function OwnedList({
                       trailing={coinValueNode(coinValue(o))}
                     />
                   ) : (
-                    <li key={o.address} className="flex items-center gap-3 py-2.5">
-                      <RowIndex n={i + 1} />
+                    <MenuRow key={o.address} n={i + 1}>
                       <LinkedHash value={o.address} />
                       {(o.name || o.description) && (
                         <span
@@ -838,7 +827,7 @@ function OwnedList({
                           )}
                         </span>
                       )}
-                    </li>
+                    </MenuRow>
                   )
                 }
               </DataList>

@@ -3,7 +3,6 @@ import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Pager, usePagedList } from '@/components/ui/Pager'
 import { DataList } from '@/components/ui/DataList'
 import { CollapseToggle } from '@/components/ui/CollapseToggle'
-import { RowIndex } from '@/components/ui/RowIndex'
 import { LinkedHash, EntityLink } from '@/components/ui/links'
 import { Muted } from '@/components/ui/Field'
 import { useNetwork } from '@/context/useNetwork'
@@ -12,6 +11,7 @@ import { useAsync } from '@/lib/useAsync'
 import { fetchOwnedUpgradeCaps, type OwnedUpgradeCapNode } from '@/lib/object'
 import { upgradeCapData, policyLabel, type UpgradeCapData } from '@/lib/upgradeCap'
 import { reverseResolveMvrBulk } from '@/lib/mvr'
+import { MenuRow } from '@/components/ui/MenuRow'
 
 export interface CapRow extends UpgradeCapData {
   /** The UpgradeCap object's own id. */
@@ -69,8 +69,7 @@ export function UpgradeCapRow({
     .join(' · ')
 
   return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
-      <RowIndex n={n} />
+    <MenuRow n={n} wrap>
       <LinkedHash value={row.id} />
       <span className="text-muted shrink-0" title="governs this package">
         →
@@ -86,7 +85,7 @@ export function UpgradeCapRow({
         )}
       </span>
       {meta && <span className="text-muted shrink-0">{meta}</span>}
-    </li>
+    </MenuRow>
   )
 }
 

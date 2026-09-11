@@ -18,6 +18,7 @@ import {
   fetchVersionedInner,
   type DynamicFieldNode,
 } from '@/lib/object'
+import { menuRowClass } from '@/components/ui/MenuRow'
 
 /** A `0x2::versioned::Versioned` field detected on a parent object: the wrapped
  *  Versioned object's id + version. Drives the inner-value fallback below. */
@@ -131,7 +132,7 @@ export function DynamicFields({
                       ? `open ${target} at v${objVersion}`
                       : `open ${target}`
                   }
-                  className="hover:bg-surface-2 group -mx-2 flex items-center gap-2 px-2 py-2.5 transition-colors"
+                  className={menuRowClass({ hover: true, className: 'group -mx-2 gap-2 px-2' })}
                 >
                   <RowIndex n={i + 1} />
                   {derived ? (
@@ -232,7 +233,7 @@ function VersionedInnerPanel({ versioned }: { versioned: VersionedRef }) {
           <Link
             to={searchHref(inner.id)}
             title={`open ${inner.id}`}
-            className="hover:bg-surface-2 group -mx-2 flex items-center gap-2 px-2 py-2.5 font-mono text-xs transition-colors"
+            className={menuRowClass({ hover: true, className: 'group -mx-2 gap-2 px-2 font-mono text-xs' })}
           >
             <span className="text-primary group-hover:underline">
               {inner.type ? formatType(inner.type) : 'inner value'}

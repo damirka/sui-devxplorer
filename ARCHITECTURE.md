@@ -47,7 +47,8 @@ src/
   theme/                  data-theme on <html>; ThemeProvider + useTheme (split for fast-refresh)
   context/                NetworkProvider — network lives in ?network=, seeded from localStorage
   components/
-    ui/                   design-system primitives (Button, Panel, Badge, Hash, SearchBar, …)
+    ui/                   design-system primitives (Button, Panel, Badge, Hash, SearchBar,
+                          MenuRow/RowIndex, PromptInput, KeyHints, Modal, …)
     layout/               AppShell (Header + <main>), Header, Logo
     bookmarks/            BookmarksHotkeys (headless `b`/`B` owner), the name popup
                           (BookmarkEditModal) and the jump list (BookmarksListModal)
@@ -80,7 +81,8 @@ only). Three layers:
 3. `@layer components` — the reusable classes: `.btn`/`.btn-primary`/`.btn-ghost`,
    `.input`, `.panel`, the section-header trio `.panel-index` + `.panel-label`
    (uppercase, tracked) + `.rule` (the flexing divider), the indexed list
-   primitive `.menu-num` (via `RowIndex`), `.badge` (+ `.badge-danger`/`.badge-muted`),
+   primitive `.menu-num` (via `RowIndex`, inside `MenuRow` — the one list-row
+   component; `menuRowClass()` for rows that are links/buttons), `.badge` (+ `.badge-danger`/`.badge-muted`),
    `.kbd`, `.hash`, `.skeleton`, `.popover` (floating panels), `.term-caret`.
 
 **When adding UI:** reach for a semantic utility or an existing component class

@@ -20,6 +20,7 @@ import { diffJson, type JsonChange } from '@/lib/jsonDiff'
 import { formatTimestamp } from '@/lib/format'
 import { truncateMiddle } from '@/lib/search'
 import { cn } from '@/lib/cn'
+import { MenuRow } from '@/components/ui/MenuRow'
 
 /**
  * An object's version history, newest-first. Each row pins the object to that
@@ -129,7 +130,7 @@ function HistoryRow({
     >
       {/* Fixed-width version + timestamp columns so the owner / digest line up
           across rows (a 1- vs 2-digit day no longer shifts everything). */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
+      <MenuRow as="div" wrap>
         {/* Expand the per-transaction object diff (only when a producing tx is
             known). An explicit label, not a bare chevron, so it's discoverable;
             both labels are the same length, so the columns stay aligned. */}
@@ -185,7 +186,7 @@ function HistoryRow({
             viewing
           </span>
         )}
-      </div>
+      </MenuRow>
       {open && v.txDigest && <ObjectChangeDiff id={id} txDigest={v.txDigest} />}
     </li>
   )

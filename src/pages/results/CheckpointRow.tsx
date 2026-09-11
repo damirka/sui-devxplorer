@@ -7,6 +7,7 @@ import { tipLagMs, type CheckpointSummary } from '@/lib/checkpoint'
 import { formatAgeAgo, formatCount, formatNumber, formatSui, formatTimestamp } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { CheckpointTxs } from './CheckpointTxs'
+import { menuRowClass } from '@/components/ui/MenuRow'
 
 /**
  * One checkpoint in the feed — a summary line that expands to its on-chain detail
@@ -35,7 +36,7 @@ export function CheckpointRow({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="hover:bg-surface-2 flex w-full flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-left transition-colors"
+        className={menuRowClass({ wrap: true, hover: true, className: 'w-full text-left' })}
       >
         <RowIndex n={index} />
         <ChevronRight

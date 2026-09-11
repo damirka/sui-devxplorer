@@ -18,6 +18,7 @@ import {
 import { formatNumber, formatTokenAmount } from '@/lib/format'
 import { normalizeSuiId } from '@/lib/search'
 import type { Network } from '@/context/network-context'
+import { MenuRow } from '@/components/ui/MenuRow'
 
 /** The native gas coin's full type repr (the form the service returns). */
 const SUI_TYPE = normalizeSuiId('2') + '::sui::SUI'
@@ -210,10 +211,7 @@ export function Balances({
               // alone already says it all for a pure coin/address balance.
               const mixed = hasCoins && hasAddr
               return (
-                <li
-                  key={r.coinType}
-                  className="flex items-start justify-between gap-3 py-2.5"
-                >
+                <MenuRow key={r.coinType} top className="justify-between">
                   <span className="flex min-w-0 items-center gap-2">
                     <CoinIcon url={m?.iconUrl} symbol={m?.symbol} />
                     <span className="min-w-0 break-all">
@@ -236,7 +234,7 @@ export function Balances({
                       </span>
                     )}
                   </span>
-                </li>
+                </MenuRow>
               )
             }}
           </DataList>

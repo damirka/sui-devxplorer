@@ -2,13 +2,13 @@ import { Link } from 'react-router-dom'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { LinkedHash, EntityLink, useSearchHref } from '@/components/ui/links'
-import { RowIndex } from '@/components/ui/RowIndex'
 import { Muted } from '@/components/ui/Field'
 import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
 import { fetchPackageLinkage } from '@/lib/object'
 import { reverseResolveMvrBulk } from '@/lib/mvr'
 import { normalizeSuiId } from '@/lib/search'
+import { MenuRow } from '@/components/ui/MenuRow'
 
 /** Well-known system packages → friendly names, shown instead of the raw id. */
 const SYSTEM_NAMES = new Map<string, string>([
@@ -83,8 +83,7 @@ export function PackageDependencies({ packageId }: { packageId: string }) {
         ) : data && data.length > 0 ? (
           <ul className="divide-line max-h-[28rem] divide-y overflow-y-auto font-mono text-xs">
             {data.map((d, i) => (
-              <li key={d.upgradedId} className="flex items-center gap-3 py-2.5">
-                <RowIndex n={i + 1} />
+              <MenuRow key={d.upgradedId} n={i + 1}>
                 <span className="flex min-w-0 flex-1 items-center gap-2.5">
                   {d.framework ? (
                     <Link
@@ -102,7 +101,7 @@ export function PackageDependencies({ packageId }: { packageId: string }) {
                   <span className="text-muted shrink-0">v{d.version}</span>
                 </span>
                 {(d.framework || d.mvrName) && <LinkedHash value={d.upgradedId} />}
-              </li>
+              </MenuRow>
             ))}
           </ul>
         ) : (

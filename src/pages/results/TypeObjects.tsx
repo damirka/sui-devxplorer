@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Pager, usePagedList } from '@/components/ui/Pager'
 import { DataList } from '@/components/ui/DataList'
-import { RowIndex } from '@/components/ui/RowIndex'
 import { Badge } from '@/components/ui/Badge'
 import { CollapseToggle } from '@/components/ui/CollapseToggle'
 import { LinkedHash, TypeLink } from '@/components/ui/links'
@@ -15,6 +14,7 @@ import {
   type ObjectOwner,
   type TypeObject,
 } from '@/lib/object'
+import { MenuRow } from '@/components/ui/MenuRow'
 
 /** Owner kind as a muted tag (shared / immutable / address / object …). */
 function OwnerBadge({ owner }: { owner: ObjectOwner | null }) {
@@ -101,8 +101,7 @@ export function TypeObjects({
             scroll
           >
             {(o, i) => (
-              <li key={o.address} className="flex items-start gap-3 py-2.5">
-                <RowIndex n={i + 1} />
+              <MenuRow key={o.address} n={i + 1} top>
                 <span className="shrink-0">
                   <LinkedHash value={o.address} />
                 </span>
@@ -115,7 +114,7 @@ export function TypeObjects({
                   )}
                 </span>
                 <OwnerBadge owner={o.owner} />
-              </li>
+              </MenuRow>
             )}
           </DataList>
         )}
