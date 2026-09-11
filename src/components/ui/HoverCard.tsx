@@ -33,7 +33,7 @@ export function HoverCard({
           align === 'right' ? 'right-0' : 'left-0',
         )}
       >
-        <span className="border-line bg-surface glow block w-max max-w-md border p-3 text-xs">
+        <span className="popover block w-max max-w-md p-3 text-xs">
           {card}
         </span>
       </span>

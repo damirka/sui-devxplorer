@@ -51,6 +51,7 @@ import {
 } from '@/lib/suins'
 import { isStakedSuiType } from '@/lib/staking'
 import { resolveMvrType } from '@/lib/mvr'
+import { isEditableTarget, isModalOpen, useKeydown } from '@/lib/hotkeys'
 import {
   StructDeclaration,
   innerValueSignature,
@@ -618,24 +619,17 @@ function MoveObjectBody({
   )
 
   // Hidden power-user nav: ←/→ step to the older/newer version (unless typing
-  // in a field). Exact neighbours, so it hops across Lamport-version gaps.
-  useEffect(() => {
-    function onKey(e: globalThis.KeyboardEvent) {
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
-      const a = document.activeElement as HTMLElement | null
-      const tag = a?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || a?.isContentEditable) {
-        return
-      }
-      const target = e.key === 'ArrowLeft' ? olderVersion : newerVersion
-      if (target == null) return
-      e.preventDefault()
-      navigate(versionHref(target))
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [olderVersion, newerVersion, navigate, versionHref])
+  // in a field or a popup is up). Exact neighbours, so it hops across
+  // Lamport-version gaps.
+  useKeydown((e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+    if (isModalOpen() || isEditableTarget(e.target)) return
+    const target = e.key === 'ArrowLeft' ? olderVersion : newerVersion
+    if (target == null) return
+    e.preventDefault()
+    navigate(versionHref(target))
+  })
 
   // Toggle the Fields panel between the contents JSON and a unified diff of what
   // the producing transaction changed.

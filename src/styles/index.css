@@ -164,22 +164,7 @@
     background-color: var(--border);
   }
 
-  /* Indexed menu row (the Sifu list primitive). */
-  .menu-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    border-bottom: 1px solid var(--border);
-    transition:
-      background-color 0.12s ease,
-      color 0.12s ease;
-  }
-  .menu-row:last-child {
-    border-bottom: 0;
-  }
-  .menu-row:hover {
-    background-color: var(--surface-2);
-  }
+  /* The leading `01` index of a menu row (see `RowIndex`). */
   .menu-num {
     font-family: var(--font-mono);
     font-size: 0.6875rem;
@@ -339,9 +324,14 @@
     animation: shimmer 1.6s infinite;
   }
 
-  /* Hard elevation for popovers — a flat drop, no neon bloom. */
-  .glow {
+  /* Floating panel (dropdown menu, hints list, hover card): a panel with a
+     hard flat drop — no neon bloom — and the short fade-in. Position and
+     z-index stay at the call site. */
+  .popover {
+    background-color: var(--surface);
+    border: 1px solid var(--border);
     box-shadow: 0 12px 28px -10px rgb(0 0 0 / 0.75);
+    animation: fadeIn 0.12s ease-out;
   }
 
   /* Chunky terminal block caret (overlaid; native caret can't be thickened) */

@@ -78,8 +78,8 @@ only). Three layers:
 3. `@layer components` — the reusable classes: `.btn`/`.btn-primary`/`.btn-ghost`,
    `.input`, `.panel`, the section-header trio `.panel-index` + `.panel-label`
    (uppercase, tracked) + `.rule` (the flexing divider), the indexed list
-   primitives `.menu-row` + `.menu-num`, `.badge` (+ `.badge-danger`/`.badge-muted`),
-   `.kbd`, `.hash`, `.skeleton`, `.glow`, `.term-caret`.
+   primitive `.menu-num` (via `RowIndex`), `.badge` (+ `.badge-danger`/`.badge-muted`),
+   `.kbd`, `.hash`, `.skeleton`, `.popover` (floating panels), `.term-caret`.
 
 **When adding UI:** reach for a semantic utility or an existing component class
 first. Add a new `@layer components` class for anything reused; never hard-code

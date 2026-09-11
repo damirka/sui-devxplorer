@@ -68,7 +68,7 @@ export function NetworkSelect() {
       </button>
 
       {open && (
-        <div className="panel glow animate-[fadeIn_120ms_ease] absolute right-0 z-50 mt-2 w-72 overflow-hidden p-1">
+        <div className="popover absolute right-0 z-50 mt-2 w-72 overflow-hidden p-1">
           <ul role="listbox">
             {NETWORKS.map((n) => (
               <li key={n}>

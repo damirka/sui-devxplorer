@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { KeyHints } from '@/components/ui/KeyHints'
 import { Modal } from '@/components/ui/Modal'
-import { HOTKEYS, hotkeyAllowed } from '@/lib/hotkeys'
+import { HOTKEYS, hotkeyAllowed, useKeydown } from '@/lib/hotkeys'
 
 /**
  * The `?` popup: every hotkey on the site, from one table (`lib/hotkeys.ts`).
@@ -15,22 +15,18 @@ import { HOTKEYS, hotkeyAllowed } from '@/lib/hotkeys'
 export function Cheatsheet() {
   const [open, setOpen] = useState(false)
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== '?' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
-      // While we're the open popup the gate says no — but `?` still closes us.
-      if (open) {
-        e.preventDefault()
-        setOpen(false)
-        return
-      }
-      if (!hotkeyAllowed(e)) return
+  useKeydown((e) => {
+    if (e.key !== '?' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
+    // While we're the open popup the gate says no — but `?` still closes us.
+    if (open) {
       e.preventDefault()
-      setOpen(true)
+      setOpen(false)
+      return
     }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [open])
+    if (!hotkeyAllowed(e)) return
+    e.preventDefault()
+    setOpen(true)
+  })
 
   return (
     <>

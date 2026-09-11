@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+
 /**
  * Shared bits for the site's keyboard layer: the guard every bare-letter hotkey
  * must apply, the platform modifier for key hints, and the cheatsheet data —
@@ -25,6 +27,28 @@ export function shiftedLetter(e: KeyboardEvent): string | null {
   if (k >= 'A' && k <= 'Z') return k
   if (e.shiftKey && k >= 'a' && k <= 'z') return k.toUpperCase()
   return null
+}
+
+/**
+ * Subscribe `handler` to `keydown` on the document for the component's
+ * lifetime. The latest render's handler is the one called, so callers pass no
+ * dependency list and never re-subscribe.
+ */
+export function useKeydown(handler: (e: KeyboardEvent) => void): void {
+  const latest = useRef(handler)
+  useEffect(() => {
+    latest.current = handler
+  })
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => latest.current(e)
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+}
+
+/** Step a menu cursor by `delta` over `n` rows, wrapping at both ends. */
+export function cycle(i: number, delta: number, n: number): number {
+  return n ? (((i + delta) % n) + n) % n : 0
 }
 
 // ─── the gate ───────────────────────────────────────────────────────────────

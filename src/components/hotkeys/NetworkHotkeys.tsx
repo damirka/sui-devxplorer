@@ -1,7 +1,6 @@
-import { useEffect } from 'react'
 import type { FixedNetwork } from '@/context/network-context'
 import { useNetwork } from '@/context/useNetwork'
-import { hotkeyAllowed, shiftedLetter } from '@/lib/hotkeys'
+import { hotkeyAllowed, shiftedLetter, useKeydown } from '@/lib/hotkeys'
 
 /** Shifted letter → the fixed network it selects. */
 const NETWORK_BY_KEY: Record<string, FixedNetwork> = {
@@ -19,18 +18,14 @@ const NETWORK_BY_KEY: Record<string, FixedNetwork> = {
 export function NetworkHotkeys() {
   const { network, setNetwork } = useNetwork()
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (!hotkeyAllowed(e)) return
-      const letter = shiftedLetter(e)
-      const next = letter ? NETWORK_BY_KEY[letter] : undefined
-      if (!next) return
-      e.preventDefault()
-      if (next !== network) setNetwork(next)
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [network, setNetwork])
+  useKeydown((e) => {
+    if (!hotkeyAllowed(e)) return
+    const letter = shiftedLetter(e)
+    const next = letter ? NETWORK_BY_KEY[letter] : undefined
+    if (!next) return
+    e.preventDefault()
+    if (next !== network) setNetwork(next)
+  })
 
   return null
 }

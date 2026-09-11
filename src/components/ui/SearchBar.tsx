@@ -11,7 +11,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { detectSearchKind, type SearchKind, type SearchResultKind } from '@/lib/search'
 import { withSearch } from './links'
 import { cn } from '@/lib/cn'
-import { isEditableTarget, isModalOpen } from '@/lib/hotkeys'
+import { cycle, isEditableTarget, isModalOpen, useKeydown } from '@/lib/hotkeys'
 
 interface SearchBarProps {
   variant?: 'hero' | 'compact'
@@ -114,18 +114,14 @@ export function SearchBar({ variant = 'hero', autoFocus, hints, onNavigate }: Se
 
   // Dev muscle memory: `/` or Tab focuses the search from anywhere (unless
   // already typing in a field, or a popup is up — it would focus us underneath).
-  useEffect(() => {
-    function onKey(e: globalThis.KeyboardEvent) {
-      if (e.key !== '/' && e.key !== 'Tab') return
-      const el = inputRef.current
-      if (!el || el.offsetParent === null) return // skip hidden instances
-      if (isModalOpen() || isEditableTarget(document.activeElement)) return
-      e.preventDefault()
-      el.focus()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [])
+  useKeydown((e) => {
+    if (e.key !== '/' && e.key !== 'Tab') return
+    const el = inputRef.current
+    if (!el || el.offsetParent === null) return // skip hidden instances
+    if (isModalOpen() || isEditableTarget(e.target)) return
+    e.preventDefault()
+    el.focus()
+  })
 
   const trimmed = value.trim()
 
@@ -172,12 +168,13 @@ export function SearchBar({ variant = 'hero', autoFocus, hints, onNavigate }: Se
     if (showHints) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setActiveHint((i) => (i + 1) % HINTS.length)
+        setActiveHint((i) => cycle(i, 1, HINTS.length))
         return
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault()
-        setActiveHint((i) => (i <= 0 ? HINTS.length - 1 : i - 1))
+        // From "nothing highlighted" (−1), ↑ lands on the last row.
+        setActiveHint((i) => (i < 0 ? HINTS.length - 1 : cycle(i, -1, HINTS.length)))
         return
       }
       if (e.key === 'Enter' && activeHint >= 0) {
@@ -410,8 +407,7 @@ function HintsDropdown({
       // navigation instead of a blur that closes the dropdown first.
       onMouseDown={(e) => e.preventDefault()}
       onMouseLeave={() => onHover(-1)}
-      className="border-line bg-surface glow absolute top-full right-0 left-0 z-30 mt-2 border p-4"
-      style={{ animation: 'fadeIn 0.12s ease-out' }}
+      className="popover absolute top-full right-0 left-0 z-30 mt-2 p-4"
     >
       {detected ? (
         <div className="border-line mb-3 flex items-center justify-between gap-3 border-b pb-3 font-mono text-xs">

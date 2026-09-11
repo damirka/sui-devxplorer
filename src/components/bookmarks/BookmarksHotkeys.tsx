@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useNetwork } from '@/context/useNetwork'
 import {
@@ -8,7 +8,7 @@ import {
   type Bookmark,
   type PageParams,
 } from '@/lib/bookmarks'
-import { hotkeyAllowed, shiftedLetter } from '@/lib/hotkeys'
+import { hotkeyAllowed, shiftedLetter, useKeydown } from '@/lib/hotkeys'
 import { BookmarkEditModal } from './BookmarkEditModal'
 import { BookmarksListModal } from './BookmarksListModal'
 
@@ -48,20 +48,16 @@ export function BookmarksHotkeys() {
     [params, existing],
   )
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (!hotkeyAllowed(e) || e.ctrlKey || e.metaKey || e.altKey) return
-      if (shiftedLetter(e) === 'B') {
-        e.preventDefault()
-        setOpen('list')
-      } else if (e.key === 'b' && canBookmark) {
-        e.preventDefault()
-        editCurrent(false)
-      }
+  useKeydown((e) => {
+    if (!hotkeyAllowed(e) || e.ctrlKey || e.metaKey || e.altKey) return
+    if (shiftedLetter(e) === 'B') {
+      e.preventDefault()
+      setOpen('list')
+    } else if (e.key === 'b' && canBookmark) {
+      e.preventDefault()
+      editCurrent(false)
     }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [canBookmark, editCurrent])
+  })
 
   const closeAll = useCallback(() => setOpen(null), [])
   const closeEdit = useCallback(
