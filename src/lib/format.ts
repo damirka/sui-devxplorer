@@ -165,6 +165,24 @@ export function formatAge(ms: number): string {
 }
 
 /**
+ * Coarse "how long ago" for a past moment, from the elapsed milliseconds:
+ * `just now`, `42s ago`, `5m ago`, `3h ago`, `2d ago`, `6w ago`. One unit, no
+ * decimals — a glanceable age for lists (bookmarks), not a live counter.
+ */
+export function formatAgo(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  if (s < 5) return 'just now'
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24)
+  if (d < 7) return `${d}d ago`
+  return `${Math.floor(d / 7)}w ago`
+}
+
+/**
  * A next-epoch countdown from the milliseconds remaining: `—` when unknown,
  * `~now` at/after the boundary, else a `~`-prefixed {@link formatAge} (`~4h 12m`).
  * Shared by the liveness banner, the validator summary, and the landing live
