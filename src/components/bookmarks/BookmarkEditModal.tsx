@@ -6,14 +6,13 @@ import type { Network } from '@/context/network-context'
 import {
   addBookmark,
   bookmarkKind,
-  displayTarget,
   removeBookmark,
   renameBookmark,
   suggestedName,
   type Bookmark,
   type PageParams,
 } from '@/lib/bookmarks'
-import { formatAgo } from '@/lib/format'
+import { formatAgo, formatIdentifier } from '@/lib/format'
 import { useNow } from '@/lib/useNow'
 import { KindTag } from './bits'
 
@@ -113,7 +112,7 @@ function EditForm({
       <div className="flex min-w-0 items-center gap-2.5 font-mono text-xs">
         <KindTag kind={bookmarkKind(params)} />
         <span className="hash min-w-0 flex-1 truncate" title={search}>
-          {displayTarget(search)}
+          {formatIdentifier(search)}
         </span>
         {existing && (
           <span

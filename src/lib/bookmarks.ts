@@ -1,9 +1,8 @@
 import { useSyncExternalStore } from 'react'
 import type { Network } from '@/context/network-context'
-import { formatAddress, formatType } from './format'
 import { isPinParam } from './params'
 import { onStorageChange, storedKey, type StoredKey } from './storage'
-import { detectSearchKind, truncateMiddle, type SearchKind } from './search'
+import { detectSearchKind, type SearchKind } from './search'
 
 /**
  * Bookmarks: per-browser, per-network lists of explorer pages worth coming back
@@ -74,20 +73,6 @@ export function findBookmark(
 
 // ─── display ────────────────────────────────────────────────────────────────
 
-/** Short kind tag for a bookmark row. `package` covers any `::` Move path
- *  (module, type or function), hence the neutral `move`. */
-export const KIND_TAG: Record<SearchKind, string> = {
-  address: 'address',
-  object: 'object',
-  transaction: 'tx',
-  package: 'move',
-  suins: 'suins',
-  mvr: 'mvr',
-  checkpoints: 'checkpoints',
-  validators: 'validators',
-  unknown: '?',
-}
-
 export function bookmarkKind(params: PageParams): SearchKind {
   return detectSearchKind(params.search).kind
 }
@@ -103,17 +88,6 @@ export function bookmarkKind(params: PageParams): SearchKind {
 export function suggestedName(params: PageParams): string {
   const search = params.search
   return search.includes('::') ? search.replace(/0x[0-9a-fA-F]+::/g, '') : search
-}
-
-/**
- * The target id in display form: addresses trimmed (inside Move paths too),
- * long digests middle-truncated, names and keywords as typed.
- */
-export function displayTarget(search: string): string {
-  if (search.includes('::')) return formatType(search)
-  if (/^0x[0-9a-f]+$/i.test(search)) return formatAddress(search)
-  if (search.length > 24) return truncateMiddle(search, 8, 6)
-  return search
 }
 
 // ─── store ──────────────────────────────────────────────────────────────────

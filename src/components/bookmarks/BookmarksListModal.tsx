@@ -7,18 +7,17 @@ import { RowIndex } from '@/components/ui/RowIndex'
 import { useCopy } from '@/components/ui/useCopy'
 import type { Network } from '@/context/network-context'
 import { cn } from '@/lib/cn'
-import { formatAgo } from '@/lib/format'
+import { formatAgo, formatIdentifier } from '@/lib/format'
 import { cycle, MOD_KEY } from '@/lib/hotkeys'
 import { useNow } from '@/lib/useNow'
 import {
   bookmarkKind,
-  displayTarget,
   removeBookmark,
   restoreBookmark,
   useBookmarks,
-  KIND_TAG,
   type Bookmark,
 } from '@/lib/bookmarks'
+import { KIND_META } from '@/lib/search'
 import { KindTag } from './bits'
 
 /** What the action strip (tab) offers for the highlighted bookmark; `key` is
@@ -59,7 +58,7 @@ export function BookmarksListModal({ open, ...props }: ListProps & { open: boole
 /** Everything a row shows, lowercased — what the filter matches against. */
 function haystack(b: Bookmark): string {
   const search = b.params.search
-  return [b.name, search, displayTarget(search), KIND_TAG[bookmarkKind(b.params)]]
+  return [b.name, search, formatIdentifier(search), KIND_META[bookmarkKind(b.params)].tag]
     .join(' ')
     .toLowerCase()
 }
@@ -204,13 +203,13 @@ function BookmarkList({ onClose, network, canAdd, onAdd, onRename }: ListProps) 
 
   const status = copiedValue ? (
     <>
-      copied <span className="text-text">{displayTarget(copiedValue)}</span>
+      copied <span className="text-text">{formatIdentifier(copiedValue)}</span>
     </>
   ) : lastDeleted ? (
     <>
       deleted{' '}
       <span className="text-text">
-        {lastDeleted.name || displayTarget(lastDeleted.params.search)}
+        {lastDeleted.name || formatIdentifier(lastDeleted.params.search)}
       </span>
     </>
   ) : null
@@ -264,7 +263,7 @@ function BookmarkList({ onClose, network, canAdd, onAdd, onRename }: ListProps) 
           const on = i === idx
           const search = b.params.search
           // A pinned object version is part of what was marked — show it.
-          const id = displayTarget(search) + (b.params.version ? ` v${b.params.version}` : '')
+          const id = formatIdentifier(search) + (b.params.version ? ` v${b.params.version}` : '')
           const kind = bookmarkKind(b.params)
           return (
             <Fragment key={b.id}>
@@ -294,7 +293,7 @@ function BookmarkList({ onClose, network, canAdd, onAdd, onRename }: ListProps) 
                   </span>
                 )}
                 {/* Keyword pages (`checkpoints`) already read as their kind. */}
-                {KIND_TAG[kind] !== search && <KindTag kind={kind} />}
+                {KIND_META[kind].tag !== search && <KindTag kind={kind} />}
                 <span
                   className="text-muted w-16 shrink-0 text-right tabular-nums"
                   title={new Date(b.createdAt).toISOString()}

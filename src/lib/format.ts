@@ -1,5 +1,5 @@
 import { formatAddress as sdkFormatAddress } from '@mysten/sui/utils'
-import { shortenAddress } from './search'
+import { shortenAddress, truncateMiddle } from './search'
 
 /**
  * Display form for a single address: leading-zero "named" addresses collapse to
@@ -22,6 +22,17 @@ const ADDRESS_RE = /0x[0-9a-fA-F]+/g
  */
 export function formatType(type: string): string {
   return type.replace(ADDRESS_RE, (addr) => formatAddress(addr))
+}
+
+/**
+ * Any search value in display form: addresses trimmed (inside Move paths too),
+ * long digests middle-truncated at `Hash`'s width, names and keywords as typed.
+ */
+export function formatIdentifier(value: string): string {
+  if (value.includes('::')) return formatType(value)
+  if (/^0x[0-9a-f]+$/i.test(value)) return formatAddress(value)
+  if (value.length > 24) return truncateMiddle(value)
+  return value
 }
 
 // Framework-qualified prefix (0x1/0x2/0x3 std + Sui packages, full 64-hex form):

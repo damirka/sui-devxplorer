@@ -20,6 +20,22 @@ export type SearchKind =
   | 'validators'
   | 'unknown'
 
+/** Display metadata per kind: `tag` is the terse uppercase row tag (`TX`,
+ *  `MOVE`), `label` the prose the search box echoes (`resolves to …`; empty
+ *  for `unknown`). `package` covers any `::` Move path — module, type or
+ *  function — hence the neutral `move`. */
+export const KIND_META: Record<SearchKind, { tag: string; label: string }> = {
+  address: { tag: 'address', label: 'address' },
+  object: { tag: 'object', label: 'object' },
+  transaction: { tag: 'tx', label: 'transaction' },
+  package: { tag: 'move', label: 'move type / function' },
+  suins: { tag: 'suins', label: 'suins name' },
+  mvr: { tag: 'mvr', label: 'mvr name' },
+  checkpoints: { tag: 'checkpoints', label: 'network liveness' },
+  validators: { tag: 'validators', label: 'validator set' },
+  unknown: { tag: '?', label: '' },
+}
+
 export interface SearchResultKind {
   /** Best-guess entity type for routing. */
   kind: SearchKind

@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
 } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { detectSearchKind, type SearchKind, type SearchResultKind } from '@/lib/search'
+import { detectSearchKind, KIND_META, type SearchKind, type SearchResultKind } from '@/lib/search'
 import { KeyHints } from './KeyHints'
 import { PromptInput } from './PromptInput'
 import { withSearch } from './links'
@@ -45,17 +45,6 @@ const HINTS: { example: string; label: string; kind: SearchKind }[] = [
 
 /** The ↑ ↓ ↵ affordance in the dropdown header — the rows are keyboard-navigable. */
 const NAV_KEYS = ['↑', '↓', '↵']
-
-/** Human label for the kind a live input resolves to (drives the echo line). */
-const KIND_LABEL: Partial<Record<SearchKind, string>> = {
-  object: 'object',
-  transaction: 'transaction',
-  package: 'move type / function',
-  suins: 'suins name',
-  mvr: 'mvr name',
-  checkpoints: 'network liveness',
-  validators: 'validator set',
-}
 
 /**
  * The single entry point of the app. Submitting writes `?search=` to the URL
@@ -397,7 +386,8 @@ function HintsDropdown({
   /** Sync the highlight to the hovered row, so mouse and keyboard agree. */
   onHover: (i: number) => void
 }) {
-  const label = detected ? KIND_LABEL[detected.kind] : undefined
+  // The echo line's label — empty for `unknown`, which reads as "keep typing".
+  const label = detected ? KIND_META[detected.kind].label : ''
   return (
     <div
       // Keep the input focused when a row is clicked, so the click lands as a
