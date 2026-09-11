@@ -103,8 +103,10 @@ hex colors in TSX — every colour goes through a token. Theme by setting
   hero caret is a custom overlay because native carets can't be thickened.
   `?` opens the cheatsheet (`components/hotkeys/Cheatsheet`) — it renders the
   `HOTKEYS` table in `lib/hotkeys.ts`, so **every new hotkey gets a row there**.
-  Hotkeys are deliberately chrome-free (no header buttons); the AppShell mounts
-  the headless owners. Bookmarks are vim-style marks (`components/bookmarks`): `b`
+  The only chrome for the keyboard layer is the `?` key at the header's right
+  edge; the AppShell mounts the headless owners. The whole layer is desktop-only
+  (`isDesktop()`, the `sm` breakpoint): inert hotkeys and a hidden `?` below it.
+  Bookmarks are vim-style marks (`components/bookmarks`): `b`
   bookmarks the current page (popup, name prefilled with the id and selected,
   ↵ saves, esc cancels), `B` opens the jump list (type to filter, ↑/↓ or
   ctrl+n/p, ↵ opens, ⌫ deletes the highlighted row while the filter is empty,

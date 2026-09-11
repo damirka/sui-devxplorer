@@ -14,6 +14,13 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
 }
 
+/** Tailwind's `sm` breakpoint. The keyboard layer is desktop-only — below it
+ *  there's no keyboard to press these with, so hotkeys and the `?` entry point
+ *  stay off. */
+export function isDesktop(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia('(min-width: 640px)').matches
+}
+
 /** The platform's primary modifier, for key hints (`⌘z` / `ctrl+z`). */
 export const MOD_KEY =
   typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent)

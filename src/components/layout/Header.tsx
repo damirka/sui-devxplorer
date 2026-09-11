@@ -8,6 +8,7 @@ import { NetworkSelect } from '@/components/ui/NetworkSelect'
 import { LivenessIndicator } from '@/components/ui/LivenessIndicator'
 import { ValidatorsLink } from '@/components/ui/ValidatorsLink'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
+import { Cheatsheet } from '@/components/hotkeys/Cheatsheet'
 
 export function Header() {
   const [searchParams] = useSearchParams()
@@ -45,6 +46,8 @@ export function Header() {
           <LivenessIndicator />
           <NetworkSelect />
           <ThemeToggle />
+          {/* `?` — the keyboard cheatsheet; desktop only, like the hotkeys. */}
+          <Cheatsheet />
         </div>
       </div>
 

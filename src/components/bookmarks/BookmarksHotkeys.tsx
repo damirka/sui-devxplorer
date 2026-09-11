@@ -8,7 +8,7 @@ import {
   type Bookmark,
   type PageParams,
 } from '@/lib/bookmarks'
-import { isEditableTarget } from '@/lib/hotkeys'
+import { isDesktop, isEditableTarget } from '@/lib/hotkeys'
 import { BookmarkEditModal } from './BookmarkEditModal'
 import { BookmarksListModal } from './BookmarksListModal'
 
@@ -25,8 +25,8 @@ interface Editing {
  * page you're on (a popup asks for a name), `B` opens the jump list for the
  * current network. Both are ignored while typing in a field or while a popup
  * is up. Renders nothing but the popups — there's deliberately no chrome for
- * this; the `?` cheatsheet is where the keys are listed. Desktop only in
- * practice: no keyboard, no way in.
+ * this; the `?` cheatsheet is where the keys are listed. Desktop only: inert
+ * below the `sm` breakpoint.
  */
 export function BookmarksHotkeys() {
   const [searchParams] = useSearchParams()
@@ -51,7 +51,7 @@ export function BookmarksHotkeys() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (open || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
-      if (isEditableTarget(e.target) || e.key.toLowerCase() !== 'b') return
+      if (!isDesktop() || isEditableTarget(e.target) || e.key.toLowerCase() !== 'b') return
       // `B` is the shifted key on a real keyboard; some automation sends
       // `b` + shiftKey instead — treat both as the list.
       if (e.shiftKey || e.key === 'B') {
