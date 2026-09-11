@@ -26,6 +26,12 @@ pnpm build      # tsc -b && vite build  → dist/
 pnpm preview
 ```
 
+## Keyboard
+
+Press `?` on the site for the full cheatsheet. The essentials: `/` focuses the
+search, `b` bookmarks the page you're on, `B` opens your bookmarks (per network,
+kept in this browser), `esc` closes whatever is open.
+
 ## Design language
 
 **Matrix phosphor green + Sifu brutalist structure** — functional and dry.

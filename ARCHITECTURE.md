@@ -39,15 +39,17 @@ src/
   lib/
     search.ts             detectSearchKind(), normalizeSuiId(), truncateMiddle()  ← pure, test here
     mvr.ts                Move Registry REST client (names ↔ packages, versions) — not GraphQL
-    bookmarks.ts          localStorage bookmark store (useSyncExternalStore) + page identity
+    bookmarks.ts          per-network localStorage bookmark store (useSyncExternalStore) + page identity
+    hotkeys.ts            the hotkey table behind the `?` cheatsheet + the typing guard
     cn.ts                 clsx + tailwind-merge
   theme/                  data-theme on <html>; ThemeProvider + useTheme (split for fast-refresh)
   context/                NetworkProvider — network lives in ?network=, seeded from localStorage
   components/
     ui/                   design-system primitives (Button, Panel, Badge, Hash, SearchBar, …)
     layout/               AppShell (Header + <main>), Header, Logo
-    bookmarks/            BookmarksControl (header entry + `b`/`B` hotkeys), the name
-                          popup (BookmarkEditModal) and the jump list (BookmarksListModal)
+    bookmarks/            BookmarksHotkeys (headless `b`/`B` owner), the name popup
+                          (BookmarkEditModal) and the jump list (BookmarksListModal)
+    hotkeys/              Cheatsheet — the `?` popup, rendered from lib/hotkeys.ts
   pages/
     Home.tsx, Hero.tsx
     results/              ObjectView, TransactionView, PackageView, SuinsView, MvrView, NotFound
@@ -99,15 +101,22 @@ hex colors in TSX — every colour goes through a token. Theme by setting
   ids with `normalizeSuiId`.
 - **Keyboard:** `/` and `Tab` focus the search globally (see `SearchBar`); the
   hero caret is a custom overlay because native carets can't be thickened.
-  Bookmarks are vim-style marks (`components/bookmarks`, desktop only): `b`
-  bookmarks the current page (popup, name prefilled with the id and selected),
-  `B` opens the jump list (type to filter, ↑/↓ or ctrl+n/p, ↵ opens, ⌫ deletes
-  the highlighted row while the filter is empty, ⌘z undoes). Bare-letter hotkeys
-  must bail when a field is focused or a popup is open — keep that guard.
-- **Bookmarks identity:** a page is `network` + every other query param
-  (`search` normalized via `detectSearchKind`, plus pins like `version`). Stored
-  under `devx:bookmarks`; opening one pins `?network=` explicitly when the
-  target network could otherwise resolve differently from the tab default.
+  `?` opens the cheatsheet (`components/hotkeys/Cheatsheet`) — it renders the
+  `HOTKEYS` table in `lib/hotkeys.ts`, so **every new hotkey gets a row there**.
+  Hotkeys are deliberately chrome-free (no header buttons); the AppShell mounts
+  the headless owners. Bookmarks are vim-style marks (`components/bookmarks`): `b`
+  bookmarks the current page (popup, name prefilled with the id and selected,
+  ↵ saves, esc cancels), `B` opens the jump list (type to filter, ↑/↓ or
+  ctrl+n/p, ↵ opens, ⌫ deletes the highlighted row while the filter is empty,
+  ⌘z undoes, ⇥ opens an action strip — open / rename / delete / copy id, with
+  o/r/d/c letter keys — and esc backs out of the strip before it closes the
+  popup). Bare-letter hotkeys must bail when a field is focused or a popup is
+  open — keep that guard.
+- **Bookmarks are per network:** stored under `devx:bookmarks:<network>`, and
+  only the current network's list is ever shown, so a bookmark never carries a
+  network. Identity is every query param but `network` (`search` normalized
+  via `detectSearchKind`, plus pins like `version`); `createdAt` is epoch ms
+  and rows show it as a relative age.
 
 ## Move Registry (MVR): a second data source
 

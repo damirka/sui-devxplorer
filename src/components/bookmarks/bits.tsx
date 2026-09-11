@@ -1,12 +1,6 @@
 import { KIND_TAG } from '@/lib/bookmarks'
 import type { SearchKind } from '@/lib/search'
 
-/** The platform's primary modifier, for key hints (`⌘z` / `ctrl+z`). */
-export const MOD_KEY =
-  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent)
-    ? '⌘'
-    : 'ctrl+'
-
 /** Tiny uppercase kind tag for a bookmark line (`TX`, `MOVE`, …). */
 export function KindTag({ kind }: { kind: SearchKind }) {
   return (

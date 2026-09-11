@@ -1,35 +1,41 @@
 import { useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Modal } from '@/components/ui/Modal'
+import type { Network } from '@/context/network-context'
 import {
   addBookmark,
   bookmarkKind,
   displayTarget,
   removeBookmark,
   renameBookmark,
+  suggestedName,
   type Bookmark,
-  type PageTarget,
+  type PageParams,
 } from '@/lib/bookmarks'
 import { formatAgo } from '@/lib/format'
 import { useNow } from '@/lib/useNow'
 import { KeyHints, KindTag } from './bits'
 
 /**
- * The `b` popup: name the current page and save it — or rename the bookmark it
- * already has. The field is prefilled with the page's id and fully selected, so
- * the fast path is either ↵ (keep the id as the label) or type-to-replace.
- * Keeping the id as the label stores an *unnamed* bookmark, so the list shows
- * the id once rather than twice.
+ * The `b` popup: name a page and save it — or rename the bookmark it already
+ * has (from the page itself, or via `rename` in the list's action strip). The
+ * field starts empty with a suggested name as its placeholder (the id, or an
+ * address-free Move path like `usdc::USDC`), so the fast path is either ↵
+ * (take the suggestion) or just type; esc cancels. Taking a bare id as the
+ * label stores an *unnamed* bookmark, so the list shows the id once rather
+ * than twice. In rename mode the field holds the current name, selected.
  */
 export function BookmarkEditModal({
   open,
   onClose,
-  target,
+  network,
+  params,
   existing,
 }: {
   open: boolean
   onClose: () => void
-  target: PageTarget
-  /** The current page's bookmark, when it already has one (→ rename mode). */
+  network: Network
+  params: PageParams
+  /** The page's bookmark, when it already has one (→ rename mode). */
   existing?: Bookmark
 }) {
   return (
@@ -42,7 +48,7 @@ export function BookmarkEditModal({
           <button
             type="button"
             onClick={() => {
-              removeBookmark(existing.id)
+              removeBookmark(network, existing.id)
               onClose()
             }}
             className="text-muted hover:text-danger shrink-0 font-mono text-xs transition-colors"
@@ -53,30 +59,35 @@ export function BookmarkEditModal({
       }
     >
       {/* Mounted fresh on every open, so the draft starts from the live label. */}
-      {open && <EditForm target={target} existing={existing} onDone={onClose} />}
+      {open && (
+        <EditForm network={network} params={params} existing={existing} onDone={onClose} />
+      )}
     </Modal>
   )
 }
 
 function EditForm({
-  target,
+  network,
+  params,
   existing,
   onDone,
 }: {
-  target: PageTarget
+  network: Network
+  params: PageParams
   existing?: Bookmark
   onDone: () => void
 }) {
-  const search = target.params.search
-  const [name, setName] = useState(existing?.name || search)
+  const search = params.search
+  const suggestion = suggestedName(params)
+  const [name, setName] = useState(existing?.name ?? '')
   const now = useNow(1000)
 
   function save() {
-    const clean = name.trim()
-    // The untouched default (the id itself) is stored as "unnamed".
+    const clean = name.trim() || suggestion
+    // A bare id as the label is stored as "unnamed" (the row shows the id).
     const label = clean === search ? '' : clean
-    if (existing) renameBookmark(existing.id, label)
-    else addBookmark(target, label)
+    if (existing) renameBookmark(network, existing.id, label)
+    else addBookmark(network, params, label)
     onDone()
   }
 
@@ -97,13 +108,10 @@ function EditForm({
   return (
     <form onSubmit={submit} className="flex flex-col gap-3 p-4">
       <div className="flex min-w-0 items-center gap-2.5 font-mono text-xs">
-        <KindTag kind={bookmarkKind(target)} />
+        <KindTag kind={bookmarkKind(params)} />
         <span className="hash min-w-0 flex-1 truncate" title={search}>
           {displayTarget(search)}
         </span>
-        {target.network !== 'mainnet' && (
-          <span className="text-muted shrink-0">{target.network}</span>
-        )}
         {existing && (
           <span
             className="text-muted shrink-0 tabular-nums"
@@ -127,9 +135,9 @@ function EditForm({
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={onKeyDown}
-          // Select the prefilled id so typing replaces it outright.
+          // Rename mode: the current name comes selected so typing replaces it.
           onFocus={(e) => e.currentTarget.select()}
-          placeholder={search}
+          placeholder={suggestion}
           spellCheck={false}
           autoComplete="off"
           aria-label="Bookmark name"

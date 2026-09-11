@@ -8,7 +8,6 @@ import { NetworkSelect } from '@/components/ui/NetworkSelect'
 import { LivenessIndicator } from '@/components/ui/LivenessIndicator'
 import { ValidatorsLink } from '@/components/ui/ValidatorsLink'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
-import { BookmarksControl } from '@/components/bookmarks/BookmarksControl'
 
 export function Header() {
   const [searchParams] = useSearchParams()
@@ -42,7 +41,6 @@ export function Header() {
               <Search size={16} />
             </button>
           )}
-          <BookmarksControl />
           <ValidatorsLink />
           <LivenessIndicator />
           <NetworkSelect />

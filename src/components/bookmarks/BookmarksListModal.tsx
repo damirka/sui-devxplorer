@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Modal } from '@/components/ui/Modal'
 import { fmtIndex } from '@/components/ui/Panel'
-import { useNetwork } from '@/context/useNetwork'
+import type { Network } from '@/context/network-context'
 import { cn } from '@/lib/cn'
 import { formatAgo } from '@/lib/format'
 import { useNow } from '@/lib/useNow'
@@ -15,28 +15,46 @@ import {
   KIND_TAG,
   type Bookmark,
 } from '@/lib/bookmarks'
-import { KeyHints, KindTag, MOD_KEY } from './bits'
+import { MOD_KEY } from '@/lib/hotkeys'
+import { KeyHints, KindTag } from './bits'
+
+/** What the action strip (⇥) offers for the highlighted bookmark; `key` is the
+ *  single-letter shortcut once the strip is open. */
+const ACTIONS = [
+  { id: 'open', label: 'open', key: 'o' },
+  { id: 'rename', label: 'rename', key: 'r' },
+  { id: 'delete', label: 'delete', key: 'd' },
+  { id: 'copy', label: 'copy id', key: 'c' },
+] as const
+type ActionId = (typeof ACTIONS)[number]['id']
 
 /**
- * The `B` popup: every bookmark as an indexed menu, newest first, driven from
- * one filter field like a command palette — type to narrow, ↑/↓ (or ctrl+n/p)
- * to move, ↵ to open, ⌫ to delete the highlighted row (only while the filter is
- * empty, so backspacing a query can't eat a bookmark) and ⌘z/ctrl+z to put the
- * last deletion back.
+ * The `B` popup: the current network's bookmarks as an indexed menu, newest
+ * first, driven from one filter field like a command palette — type to narrow,
+ * ↑/↓ (or ctrl+n/p) to move, ↵ to open, ⌫ to delete the highlighted row (only
+ * while the filter is empty, so backspacing a query can't eat a bookmark) and
+ * ⌘z/ctrl+z to put the last deletion back. ⇥ opens an action strip under the
+ * highlighted row (open / rename / delete / copy id — ←/→ or the letter keys,
+ * ↵ runs, esc backs out); esc with no strip open closes the popup.
  */
 export function BookmarksListModal({
   open,
   onClose,
+  network,
   canAdd,
   onAdd,
+  onRename,
 }: {
   open: boolean
   onClose: () => void
+  network: Network
   /** The current page can be bookmarked and isn't yet — offers `+ this page`. */
   canAdd: boolean
   onAdd: () => void
+  /** Rename one bookmark (the host swaps in the edit popup). */
+  onRename: (b: Bookmark) => void
 }) {
-  const bookmarks = useBookmarks()
+  const bookmarks = useBookmarks(network)
   return (
     <Modal
       open={open}
@@ -45,6 +63,7 @@ export function BookmarksListModal({
       className="max-w-xl"
       actions={
         <>
+          <span className="text-muted shrink-0 font-mono text-xs">{network}</span>
           <span className="menu-num shrink-0">{bookmarks.length}</span>
           {canAdd && (
             <button
@@ -59,7 +78,14 @@ export function BookmarksListModal({
       }
     >
       {/* Mounted fresh on every open: filter, highlight and undo state reset. */}
-      {open && <BookmarkList bookmarks={bookmarks} onClose={onClose} />}
+      {open && (
+        <BookmarkList
+          bookmarks={bookmarks}
+          network={network}
+          onClose={onClose}
+          onRename={onRename}
+        />
+      )}
     </Modal>
   )
 }
@@ -67,25 +93,31 @@ export function BookmarksListModal({
 /** Everything a row shows, lowercased — what the filter matches against. */
 function haystack(b: Bookmark): string {
   const search = b.params.search
-  return [b.name, search, displayTarget(search), b.network, KIND_TAG[bookmarkKind(b)]]
+  return [b.name, search, displayTarget(search), KIND_TAG[bookmarkKind(b.params)]]
     .join(' ')
     .toLowerCase()
 }
 
 function BookmarkList({
   bookmarks,
+  network,
   onClose,
+  onRename,
 }: {
   bookmarks: readonly Bookmark[]
+  network: Network
   onClose: () => void
+  onRename: (b: Bookmark) => void
 }) {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { network } = useNetwork()
   const [filter, setFilter] = useState('')
   const [active, setActive] = useState(0)
+  const [actionsOpen, setActionsOpen] = useState(false)
+  const [actionIdx, setActionIdx] = useState(0)
   const [lastDeleted, setLastDeleted] = useState<Bookmark | null>(null)
-  const listRef = useRef<HTMLDivElement>(null)
+  const [copied, setCopied] = useState<string | null>(null)
+  const rowRefs = useRef<(HTMLAnchorElement | null)[]>([])
   // Ages tick while the list is open (unmounts with it, so no idle timer).
   const now = useNow(1000)
 
@@ -104,16 +136,16 @@ function BookmarkList({
 
   // Keep the highlighted row in view as the keyboard walks a long list.
   useEffect(() => {
-    if (idx < 0) return
-    listRef.current?.children[idx]?.scrollIntoView({ block: 'nearest' })
+    if (idx >= 0) rowRefs.current[idx]?.scrollIntoView({ block: 'nearest' })
   }, [idx])
 
-  /** Href to open a bookmark. The URL omits `network` on the default and the
-   *  tab's stored default then fills it in — so pin it explicitly whenever it
-   *  could resolve to a different network than the one bookmarked. */
+  /** Href to open a bookmark: its params on the current network — the list
+   *  only ever holds this network's bookmarks, so just carry `?network=` over
+   *  as the URL has it now. */
   function hrefFor(b: Bookmark): string {
     const p = new URLSearchParams(b.params)
-    if (b.network !== network || searchParams.has('network')) p.set('network', b.network)
+    const net = searchParams.get('network')
+    if (net) p.set('network', net)
     return `?${p.toString()}`
   }
 
@@ -124,26 +156,73 @@ function BookmarkList({
 
   function deleteCurrent() {
     if (!current) return
-    removeBookmark(current.id)
+    removeBookmark(network, current.id)
     setLastDeleted(current)
+    setCopied(null)
   }
 
   function undoDelete() {
     if (!lastDeleted) return
-    restoreBookmark(lastDeleted)
+    restoreBookmark(network, lastDeleted)
     setLastDeleted(null)
+  }
+
+  function runAction(id: ActionId) {
+    if (!current) return
+    setActionsOpen(false)
+    if (id === 'open') openBookmark(current)
+    else if (id === 'rename') onRename(current)
+    else if (id === 'delete') deleteCurrent()
+    else if (id === 'copy') {
+      void navigator.clipboard.writeText(current.params.search)
+      setCopied(current.params.search)
+    }
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     const ctrl = e.ctrlKey && !e.metaKey
     const mod = e.metaKey || e.ctrlKey
     const n = visible.length
+
+    // Row movement works the same with or without the strip (it follows the row).
     if (e.key === 'ArrowDown' || (ctrl && e.key === 'n')) {
       e.preventDefault()
       if (n) setActive((idx + 1) % n)
-    } else if (e.key === 'ArrowUp' || (ctrl && e.key === 'p')) {
+      return
+    }
+    if (e.key === 'ArrowUp' || (ctrl && e.key === 'p')) {
       e.preventDefault()
       if (n) setActive((idx - 1 + n) % n)
+      return
+    }
+
+    if (actionsOpen) {
+      if (mod) return // leave browser shortcuts alone
+      // The strip owns the keyboard: nothing here types into the filter.
+      e.preventDefault()
+      if (e.key === 'Escape') {
+        e.stopPropagation() // back to the list — not out of the popup
+        setActionsOpen(false)
+      } else if (e.key === 'Tab' || e.key === 'ArrowRight') {
+        const step = e.key === 'Tab' && e.shiftKey ? -1 : 1
+        setActionIdx((i) => (i + step + ACTIONS.length) % ACTIONS.length)
+      } else if (e.key === 'ArrowLeft') {
+        setActionIdx((i) => (i - 1 + ACTIONS.length) % ACTIONS.length)
+      } else if (e.key === 'Enter') {
+        runAction(ACTIONS[actionIdx].id)
+      } else {
+        const a = ACTIONS.find((x) => x.key === e.key)
+        if (a) runAction(a.id)
+      }
+      return
+    }
+
+    if (e.key === 'Tab' && !e.shiftKey) {
+      e.preventDefault()
+      if (current) {
+        setActionIdx(0)
+        setActionsOpen(true)
+      }
     } else if (e.key === 'Enter') {
       e.preventDefault()
       if (current) openBookmark(current)
@@ -156,12 +235,19 @@ function BookmarkList({
     }
   }
 
-  const hints: (readonly [string, string])[] = [
-    ['↑↓', 'move'],
-    ['↵', 'open'],
-    ['⌫', 'delete'],
-  ]
-  if (lastDeleted) hints.push([`${MOD_KEY}z`, 'undo'])
+  const hints: (readonly [string, string])[] = actionsOpen
+    ? [
+        ['←→', 'choose'],
+        ['↵', 'run'],
+        ['esc', 'back'],
+      ]
+    : [
+        ['↑↓', 'move'],
+        ['↵', 'open'],
+        ['⇥', 'actions'],
+        ['⌫', 'delete'],
+      ]
+  if (!actionsOpen && lastDeleted) hints.push([`${MOD_KEY}z`, 'undo'])
 
   return (
     <div className="flex flex-col">
@@ -179,6 +265,7 @@ function BookmarkList({
           onChange={(e) => {
             setFilter(e.target.value)
             setActive(0)
+            setActionsOpen(false)
           }}
           onKeyDown={onKeyDown}
           placeholder="filter bookmarks"
@@ -189,49 +276,81 @@ function BookmarkList({
         />
       </div>
 
-      <div ref={listRef} className="max-h-[55vh] overflow-y-auto">
+      <div className="max-h-[55vh] overflow-y-auto">
         {visible.map((b, i) => {
           const on = i === idx
           const search = b.params.search
           // A pinned object version is part of what was marked — show it.
           const id = displayTarget(search) + (b.params.version ? ` v${b.params.version}` : '')
-          const kind = bookmarkKind(b)
+          const kind = bookmarkKind(b.params)
           return (
-            <Link
-              key={b.id}
-              to={hrefFor(b)}
-              onClick={onClose}
-              onMouseEnter={() => setActive(i)}
-              className={cn(
-                'border-line flex items-center gap-3 border-b px-4 py-2 font-mono text-xs transition-colors last:border-b-0',
-                on && 'bg-surface-2',
-              )}
-            >
-              <span className="menu-num w-5 shrink-0">{fmtIndex(i + 1)}</span>
-              <span
-                className={cn('min-w-0 flex-1 truncate', on ? 'text-primary' : 'text-text')}
-                title={search}
+            <Fragment key={b.id}>
+              <Link
+                ref={(el) => {
+                  rowRefs.current[i] = el
+                }}
+                to={hrefFor(b)}
+                onClick={onClose}
+                onMouseEnter={() => setActive(i)}
+                className={cn(
+                  'border-line flex items-center gap-3 border-b px-4 py-2 font-mono text-xs transition-colors last:border-b-0',
+                  on && 'bg-surface-2',
+                )}
               >
-                {b.name || id}
-              </span>
-              {/* Capped so a long type path can't squeeze the name out. */}
-              {b.name && (
-                <span className="text-muted max-w-40 shrink-0 truncate" title={search}>
-                  {id}
+                <span className="menu-num w-5 shrink-0">{fmtIndex(i + 1)}</span>
+                <span
+                  className={cn('min-w-0 flex-1 truncate', on ? 'text-primary' : 'text-text')}
+                  title={search}
+                >
+                  {b.name || id}
                 </span>
+                {/* Capped so a long type path can't squeeze the name out. */}
+                {b.name && (
+                  <span className="text-muted max-w-40 shrink-0 truncate" title={search}>
+                    {id}
+                  </span>
+                )}
+                {/* Keyword pages (`checkpoints`) already read as their kind. */}
+                {KIND_TAG[kind] !== search && <KindTag kind={kind} />}
+                <span
+                  className="text-muted w-16 shrink-0 text-right tabular-nums"
+                  title={new Date(b.createdAt).toISOString()}
+                >
+                  {formatAgo(now - b.createdAt)}
+                </span>
+              </Link>
+
+              {/* The action strip, attached under the highlighted row. */}
+              {on && actionsOpen && (
+                <div
+                  // Keep the filter focused when an action is clicked, so the
+                  // keyboard keeps working afterwards.
+                  onMouseDown={(e) => e.preventDefault()}
+                  className="border-line bg-surface-2 flex items-center gap-1 border-b px-4 py-1.5 font-mono text-xs"
+                >
+                  <span aria-hidden className="text-muted mr-1 select-none">
+                    ↳
+                  </span>
+                  {ACTIONS.map((a, j) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onMouseEnter={() => setActionIdx(j)}
+                      onClick={() => runAction(a.id)}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 px-2 py-1 transition-colors',
+                        j === actionIdx
+                          ? 'bg-surface text-primary'
+                          : 'text-muted hover:text-text',
+                      )}
+                    >
+                      <kbd className="kbd">{a.key}</kbd>
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
               )}
-              {/* Keyword pages (`checkpoints`) already read as their kind. */}
-              {KIND_TAG[kind] !== search && <KindTag kind={kind} />}
-              {b.network !== 'mainnet' && (
-                <span className="text-muted shrink-0">{b.network}</span>
-              )}
-              <span
-                className="text-muted w-16 shrink-0 text-right tabular-nums"
-                title={new Date(b.createdAt).toISOString()}
-              >
-                {formatAgo(now - b.createdAt)}
-              </span>
-            </Link>
+            </Fragment>
           )
         })}
 
@@ -239,7 +358,8 @@ function BookmarkList({
           <div className="text-muted px-4 py-8 text-center font-mono text-xs">
             {sorted.length === 0 ? (
               <>
-                no bookmarks yet — press <kbd className="kbd">b</kbd> on any page to mark it
+                no bookmarks on {network} yet — press <kbd className="kbd">b</kbd> on any
+                page to mark it
               </>
             ) : (
               'no match'
@@ -250,14 +370,18 @@ function BookmarkList({
 
       <div className="border-line flex items-center justify-between gap-3 border-t px-4 py-2">
         <span className="text-muted min-w-0 truncate font-mono text-[11px]">
-          {lastDeleted && (
+          {copied ? (
+            <>
+              copied <span className="text-text">{displayTarget(copied)}</span>
+            </>
+          ) : lastDeleted ? (
             <>
               deleted{' '}
               <span className="text-text">
                 {lastDeleted.name || displayTarget(lastDeleted.params.search)}
               </span>
             </>
-          )}
+          ) : null}
         </span>
         <KeyHints items={hints} />
       </div>
