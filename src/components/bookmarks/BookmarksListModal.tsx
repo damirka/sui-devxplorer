@@ -16,9 +16,10 @@ import {
   type Bookmark,
 } from '@/lib/bookmarks'
 import { MOD_KEY } from '@/lib/hotkeys'
-import { KeyHints, KindTag } from './bits'
+import { KeyHints } from '@/components/ui/KeyHints'
+import { KindTag } from './bits'
 
-/** What the action strip (⇥) offers for the highlighted bookmark; `key` is the
+/** What the action strip (tab) offers for the highlighted bookmark; `key` is the
  *  single-letter shortcut once the strip is open. */
 const ACTIONS = [
   { id: 'open', label: 'open', key: 'o' },
@@ -33,7 +34,7 @@ type ActionId = (typeof ACTIONS)[number]['id']
  * first, driven from one filter field like a command palette — type to narrow,
  * ↑/↓ (or ctrl+n/p) to move, ↵ to open, ⌫ to delete the highlighted row (only
  * while the filter is empty, so backspacing a query can't eat a bookmark) and
- * ⌘z/ctrl+z to put the last deletion back. ⇥ opens an action strip under the
+ * ⌘z/ctrl+z to put the last deletion back. tab opens an action strip under the
  * highlighted row (open / rename / delete / copy id — ←/→ or the letter keys,
  * ↵ runs, esc backs out); esc with no strip open closes the popup.
  */
@@ -244,7 +245,7 @@ function BookmarkList({
     : [
         ['↑↓', 'move'],
         ['↵', 'open'],
-        ['⇥', 'actions'],
+        ['tab', 'actions'],
         ['⌫', 'delete'],
       ]
   if (!actionsOpen && lastDeleted) hints.push([`${MOD_KEY}z`, 'undo'])

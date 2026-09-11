@@ -43,10 +43,10 @@ export const HOTKEYS: HotkeySection[] = [
   {
     title: 'anywhere',
     rows: [
-      { keys: ['/', '⇥'], does: 'focus the search' },
+      { keys: ['/', 'tab'], does: 'focus the search' },
       { keys: ['b'], does: 'bookmark this page' },
       { keys: ['B'], does: 'open bookmarks' },
-      { keys: ['?'], does: 'this cheatsheet' },
+      { keys: ['?'], does: 'open / close this cheatsheet' },
       { keys: ['esc'], does: 'close a popup' },
     ],
   },
@@ -66,7 +66,7 @@ export const HOTKEYS: HotkeySection[] = [
     rows: [
       { keys: ['↑', '↓', 'ctrl+n', 'ctrl+p'], does: 'move' },
       { keys: ['↵'], does: 'open' },
-      { keys: ['⇥'], does: 'actions for the row, then o / r / d / c' },
+      { keys: ['tab'], does: 'actions for the row, then o / r / d / c' },
       { keys: ['⌫'], does: 'delete the row (with an empty filter)' },
       { keys: [`${MOD_KEY}z`], does: 'undo the last delete' },
       { keys: ['esc'], does: 'leave the actions, then close' },

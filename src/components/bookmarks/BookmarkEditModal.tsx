@@ -13,7 +13,8 @@ import {
 } from '@/lib/bookmarks'
 import { formatAgo } from '@/lib/format'
 import { useNow } from '@/lib/useNow'
-import { KeyHints, KindTag } from './bits'
+import { KeyHints } from '@/components/ui/KeyHints'
+import { KindTag } from './bits'
 
 /**
  * The `b` popup: name a page and save it — or rename the bookmark it already

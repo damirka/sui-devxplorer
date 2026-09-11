@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
+import { Button } from '@/components/ui/Button'
+import { KeyHints } from '@/components/ui/KeyHints'
 import { Modal } from '@/components/ui/Modal'
 import { HOTKEYS, isDesktop, isEditableTarget } from '@/lib/hotkeys'
 
 /**
  * The `?` popup: every hotkey on the site, from one table (`lib/hotkeys.ts`).
- * `?` toggles it (ignored while typing in a field), esc closes, and a quiet
- * `?` key at the header's right edge is the one piece of chrome that points at
- * the keyboard layer. Desktop only: the key hides below `sm` and the hotkey is
+ * `?` toggles it (ignored while typing in a field), esc closes, and a `?`
+ * icon button at the header's right edge — the same square as the theme
+ * toggle beside it — is the one piece of chrome that points at the keyboard
+ * layer. Desktop only: the key hides below `sm` and the hotkey is
  * inert there — no keyboard, nothing to list.
  */
 export function Cheatsheet() {
@@ -25,15 +28,18 @@ export function Cheatsheet() {
 
   return (
     <>
-      <button
-        type="button"
+      {/* Same square as the theme toggle: an icon button around a 16px glyph box. */}
+      <Button
+        icon
         onClick={() => setOpen(true)}
         title="keyboard shortcuts (?)"
         aria-label="Keyboard shortcuts"
-        className="kbd hover:border-primary hover:text-primary hidden items-center px-2 py-1.5 transition-colors sm:inline-flex"
+        className="hidden sm:inline-flex"
       >
-        ?
-      </button>
+        <span aria-hidden className="inline-flex size-4 items-center justify-center">
+          ?
+        </span>
+      </Button>
 
       <Modal open={open} onClose={() => setOpen(false)} title="keyboard" className="max-w-lg">
         <div className="flex flex-col gap-5 p-4">
@@ -59,6 +65,9 @@ export function Cheatsheet() {
               </dl>
             </section>
           ))}
+        </div>
+        <div className="border-line flex items-center justify-end border-t px-4 py-2">
+          <KeyHints items={[['?', 'toggle'], ['esc', 'close']]} />
         </div>
       </Modal>
     </>

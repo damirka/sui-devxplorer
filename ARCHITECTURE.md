@@ -110,7 +110,7 @@ hex colors in TSX — every colour goes through a token. Theme by setting
   bookmarks the current page (popup, name prefilled with the id and selected,
   ↵ saves, esc cancels), `B` opens the jump list (type to filter, ↑/↓ or
   ctrl+n/p, ↵ opens, ⌫ deletes the highlighted row while the filter is empty,
-  ⌘z undoes, ⇥ opens an action strip — open / rename / delete / copy id, with
+  ⌘z undoes, tab opens an action strip — open / rename / delete / copy id, with
   o/r/d/c letter keys — and esc backs out of the strip before it closes the
   popup). Bare-letter hotkeys must bail when a field is focused or a popup is
   open — keep that guard.
