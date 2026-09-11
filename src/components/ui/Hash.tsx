@@ -11,6 +11,7 @@ export function Hash({
   tail = 4,
   copy = true,
   full = false,
+  label,
   to,
   className,
 }: {
@@ -19,20 +20,23 @@ export function Hash({
   tail?: number
   copy?: boolean
   full?: boolean
+  /** Display text in place of the (truncated) value — e.g. a resolved name.
+   *  The full value stays in the tooltip and is what `copy` copies. */
+  label?: string
   /** When set, the identifier links here (phosphor, underline on hover). */
   to?: string
   className?: string
 }) {
-  const label = full ? value : truncateMiddle(value, lead, tail)
+  const text = label ?? (full ? value : truncateMiddle(value, lead, tail))
   return (
     <span className={cn('inline-flex items-center gap-1.5', className)}>
       {to ? (
         <Link to={to} className="hash text-primary hover:underline" title={value}>
-          {label}
+          {text}
         </Link>
       ) : (
         <span className="hash" title={value}>
-          {label}
+          {text}
         </span>
       )}
       {copy && <CopyButton value={value} label="Copy id" />}

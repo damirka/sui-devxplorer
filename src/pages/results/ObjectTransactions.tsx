@@ -3,7 +3,8 @@ import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Pager, usePagedList } from '@/components/ui/Pager'
 import { LiveControl, useLivePoll } from '@/components/ui/LiveControl'
 import { DataList } from '@/components/ui/DataList'
-import { LinkedHash, useVersionHref } from '@/components/ui/links'
+import { AddressLink } from '@/components/ui/AddressLink'
+import { useVersionHref } from '@/components/ui/links'
 import { useNetwork } from '@/context/useNetwork'
 import { describeOwner, fetchObjectVersions, type ObjectVersionNode } from '@/lib/object'
 import type { ObjectRemoval } from '@/lib/transaction'
@@ -148,7 +149,7 @@ export function ObjectTransactions({
                     className="text-muted inline-flex shrink-0 items-center gap-1.5"
                     title="owner after this transaction"
                   >
-                    → <LinkedHash value={transferredTo} />
+                    → <AddressLink value={transferredTo} />
                   </span>
                 )}
               </TransactionRow>

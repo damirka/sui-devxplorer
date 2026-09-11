@@ -16,6 +16,11 @@ query params, not by the path:
 
 - `?search=<value>` — the thing being viewed. Absent → landing prompt.
 - `?network=<mainnet|testnet|devnet|localnet>` — omitted when `mainnet`.
+- Dashboard sub-state rides along too: `?feed=txs` flips the live checkpoints
+  view (`search=checkpoints`) to its programmable-transactions feed; the
+  validators view keeps its tab / opened row in `vtab`, `validator`, `view`.
+  `withSearch()` (in `components/ui/links.tsx`) drops all of these when
+  navigating to another entity — add any new dashboard param there.
 
 `src/pages/Home.tsx` reads `?search`; empty → `Hero`, otherwise → `ResultRouter`.
 `src/lib/search.ts#detectSearchKind()` classifies the raw string (address /
@@ -120,6 +125,32 @@ only — no devnet) to map packages ↔ human-readable names:
   so it renders nothing on devnet.
 
 CORS is open (`*`). All of MVR sits behind `mvrSupported(network)`.
+
+## SuiNS names on addresses
+
+Addresses render through `<AddressLink>` (`components/ui/AddressLink.tsx`),
+which shows the address's *default* SuiNS name (`@handle`) when it has one and
+the truncated id otherwise — the full address stays in the tooltip / copy
+button. Two ways the name gets there (`lib/suins.ts`):
+
+- **inline** — list queries that already return a `sender` add
+  `defaultNameRecord { domain }` to it (`TX_LIST_QUERY` → `TxListItem.senderName`).
+  Measured free at 50 rows, so prefer this wherever a query owns the address.
+- **lazily** — anywhere else, `useSuinsName` / `AddressLink` without a `name`
+  goes through `defaultSuinsNameCached`: a session memo, a localStorage cache
+  (`suins-names:v1:<endpoint>`, 6h TTL, misses cached too, bounded) and
+  per-tick micro-batching (one aliased `address(...)` request for every address
+  asked for in the same tick, ≤ 50 each). Inline results are primed into the
+  same cache (`primeSuinsNames`), so the two paths never double-fetch.
+
+## Live feed (`search=checkpoints`)
+
+`CheckpointsView` polls the chain tip + throughput continuously for the liveness
+banner, and a switchable feed — recent checkpoints, or recent programmable
+transactions (`fetchRecentTransactions`, a kind-only `PROGRAMMABLE_TX` filter on
+the top-level `transactions` connection) — every 2s. Expanding a row
+(`CheckpointRow` / `TransactionFeedRow`) *freezes* the feed until it's closed
+or the tab is switched, so what you're inspecting holds still.
 
 ## The SearchBar overlay (so you don't "fix" it by accident)
 

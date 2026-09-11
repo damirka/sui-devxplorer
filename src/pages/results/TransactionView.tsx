@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { ChevronDown, ChevronRight, ChevronUp } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { AddressLink } from '@/components/ui/AddressLink'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -185,7 +186,7 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
               {fx?.status ? <StatusPill status={fx.status} /> : <Muted>—</Muted>}
             </Field>
             <Field label="Sender">
-              {tx.sender ? <LinkedHash value={tx.sender.address} /> : <Muted>—</Muted>}
+              {tx.sender ? <AddressLink value={tx.sender.address} /> : <Muted>—</Muted>}
             </Field>
           </FieldGrid>
 
@@ -206,7 +207,7 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
               label="gas owner"
               value={
                 gas?.gasSponsor ? (
-                  <LinkedHash value={gas.gasSponsor.address} />
+                  <AddressLink value={gas.gasSponsor.address} />
                 ) : (
                   '—'
                 )

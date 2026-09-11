@@ -3,7 +3,8 @@
  * both `@handle` and `handle.sui` and exposes the registered `target` address.
  * Reverse: an `Address.defaultNameRecord` gives the address's display name.
  */
-import { gqlRequest } from './graphql'
+import { endpointFor, gqlRequest } from './graphql'
+import { normalizeSuiId } from './search'
 import type { Network } from '@/context/network-context'
 
 const RESOLVE_QUERY = `
@@ -156,4 +157,204 @@ export async function fetchOwnedSuinsNames(
       (a.expirationMs ?? Infinity) - (b.expirationMs ?? Infinity) ||
       a.address.localeCompare(b.address),
   )
+}
+
+/* ────────── default names, batched + cached (the reverse lookup at scale) ────────── */
+
+// Every transaction row wants its sender's default name, so reverse lookups go
+// through one shared path: a per-session memo of settled/in-flight promises, a
+// localStorage cache that survives reloads (a default name is stable for hours,
+// and misses — most addresses have none — are cached too), and micro-batching:
+// every address asked for in the same tick goes out as one aliased request.
+// List queries that fetch the name inline seed the same cache (`primeSuinsNames`).
+const NAME_CACHE_KEY = 'suins-names:v1'
+const NAME_TTL_MS = 6 * 60 * 60 * 1000
+const NAME_CACHE_MAX = 2_000
+const NAME_BATCH_MAX = 50
+
+interface CachedName {
+  /** The default domain, or `null` for a known miss. */
+  d: string | null
+  /** When it was resolved (epoch ms) — for the TTL and eviction order. */
+  t: number
+}
+type NameStore = Record<string, CachedName>
+
+/** Canonical cache key for an address: full-width, lowercase, `0x`-prefixed. */
+function canonAddress(address: string): string {
+  return normalizeSuiId(address.trim().toLowerCase().replace(/^0x/, ''))
+}
+
+// Stores are keyed by endpoint (not network name) so a `custom` endpoint never
+// shares names with another, and loaded from localStorage once per session.
+const stores = new Map<string, NameStore>()
+const memo = new Map<string, Promise<string | null>>()
+
+function storeFor(endpoint: string): NameStore {
+  let s = stores.get(endpoint)
+  if (!s) {
+    try {
+      const raw = localStorage.getItem(`${NAME_CACHE_KEY}:${endpoint}`)
+      s = raw ? (JSON.parse(raw) as NameStore) : {}
+    } catch {
+      s = {}
+    }
+    stores.set(endpoint, s)
+  }
+  return s
+}
+
+// Writes are coalesced: a list fetch primes up to 50 names at once, and the
+// serialized store is a few tens of KB — one write per tick, not per name.
+const dirty = new Set<string>()
+let flushTimer: ReturnType<typeof setTimeout> | null = null
+
+function flushStores() {
+  flushTimer = null
+  for (const endpoint of dirty) {
+    const s = storeFor(endpoint)
+    const keys = Object.keys(s)
+    // Bounded: past the cap, evict the oldest entries.
+    if (keys.length > NAME_CACHE_MAX) {
+      keys.sort((a, b) => s[a].t - s[b].t)
+      for (const k of keys.slice(0, keys.length - NAME_CACHE_MAX)) delete s[k]
+    }
+    try {
+      localStorage.setItem(`${NAME_CACHE_KEY}:${endpoint}`, JSON.stringify(s))
+    } catch {
+      /* storage unavailable or full — the in-memory copy still serves this session */
+    }
+  }
+  dirty.clear()
+}
+
+function remember(endpoint: string, address: string, domain: string | null) {
+  storeFor(endpoint)[address] = { d: domain, t: Date.now() }
+  memo.set(`${endpoint}|${address}`, Promise.resolve(domain))
+  dirty.add(endpoint)
+  if (!flushTimer) flushTimer = setTimeout(flushStores, 0)
+}
+
+/**
+ * Seed the reverse cache with names a list query already fetched inline (a tx
+ * list's `sender { defaultNameRecord }`), misses included — so an `AddressLink`
+ * for the same address later renders its name instantly instead of re-asking.
+ */
+export function primeSuinsNames(
+  network: Network,
+  entries: Iterable<[address: string, domain: string | null]>,
+) {
+  const endpoint = endpointFor(network)
+  for (const [address, domain] of entries) remember(endpoint, canonAddress(address), domain)
+}
+
+const DEFAULT_NAMES_ALIAS = 'a'
+
+/**
+ * The default SuiNS names of several addresses in one request — an aliased
+ * `address(...)` lookup per entry (passed as variables, never spliced into the
+ * query). Returns a map keyed by the *given* address strings; `null` for an
+ * address with no default name. Keep batches ≤ 50.
+ */
+export async function fetchDefaultSuinsNames(
+  network: Network,
+  addresses: string[],
+  signal?: AbortSignal,
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>()
+  if (addresses.length === 0) return out
+  const variables: Record<string, string> = {}
+  const decls: string[] = []
+  const fields: string[] = []
+  addresses.forEach((address, i) => {
+    const v = `${DEFAULT_NAMES_ALIAS}${i}`
+    variables[v] = address
+    decls.push(`$${v}: SuiAddress!`)
+    fields.push(`${v}: address(address: $${v}) { defaultNameRecord { domain } }`)
+  })
+  const query = `query DefaultSuinsNames(${decls.join(', ')}) { ${fields.join(' ')} }`
+  const { data } = await gqlRequest<
+    Record<string, { defaultNameRecord: { domain: string } | null } | null>
+  >(network, query, variables, signal)
+  addresses.forEach((address, i) => {
+    out.set(address, data[`${DEFAULT_NAMES_ALIAS}${i}`]?.defaultNameRecord?.domain ?? null)
+  })
+  return out
+}
+
+// Addresses awaiting resolution, per network, drained as one batch per tick.
+const queues = new Map<Network, Map<string, (domain: string | null) => void>>()
+let batchTimer: ReturnType<typeof setTimeout> | null = null
+
+function drainQueues() {
+  batchTimer = null
+  const pending = [...queues]
+  queues.clear()
+  for (const [network, queue] of pending) {
+    const entries = [...queue]
+    for (let i = 0; i < entries.length; i += NAME_BATCH_MAX) {
+      void resolveBatch(network, entries.slice(i, i + NAME_BATCH_MAX))
+    }
+  }
+}
+
+async function resolveBatch(
+  network: Network,
+  entries: [address: string, resolve: (domain: string | null) => void][],
+) {
+  const endpoint = endpointFor(network)
+  try {
+    const names = await fetchDefaultSuinsNames(
+      network,
+      entries.map(([address]) => address),
+    )
+    for (const [address, resolve] of entries) {
+      const domain = names.get(address) ?? null
+      remember(endpoint, address, domain)
+      resolve(domain)
+    }
+  } catch {
+    // A failed batch reads as "no name" for now and is forgotten, so the next
+    // mount retries instead of pinning a transient error for the whole session.
+    for (const [address, resolve] of entries) {
+      memo.delete(`${endpoint}|${address}`)
+      resolve(null)
+    }
+  }
+}
+
+/**
+ * The default SuiNS name of `address` (its `.sui` domain), or `null` — via the
+ * session memo, then the localStorage cache (fresh within the TTL), then a
+ * batched lookup shared with every other address requested in the same tick.
+ * Never rejects: a lookup failure resolves `null`.
+ */
+export function defaultSuinsNameCached(
+  network: Network,
+  address: string,
+): Promise<string | null> {
+  const endpoint = endpointFor(network)
+  const addr = canonAddress(address)
+  const key = `${endpoint}|${addr}`
+  const hit = memo.get(key)
+  if (hit) return hit
+
+  const cached = storeFor(endpoint)[addr]
+  if (cached && Date.now() - cached.t < NAME_TTL_MS) {
+    const p = Promise.resolve(cached.d)
+    memo.set(key, p)
+    return p
+  }
+
+  const p = new Promise<string | null>((resolve) => {
+    let queue = queues.get(network)
+    if (!queue) {
+      queue = new Map()
+      queues.set(network, queue)
+    }
+    queue.set(addr, resolve)
+    if (!batchTimer) batchTimer = setTimeout(drainQueues, 0)
+  })
+  memo.set(key, p)
+  return p
 }

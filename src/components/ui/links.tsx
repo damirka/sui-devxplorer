@@ -32,9 +32,10 @@ function useMvrName(packageId: string | null): string | null {
  * Apply a new `?search=` to `current`, returning fresh params. Drops the pins
  * that belong to the entity being left: `version` (a pinned object version),
  * unless a new `version` is passed (e.g. opening a dynamic field's value at the
- * version it holds), plus the validators-view deep-link params (`vtab`,
- * `validator`, `view`). The single source of truth for "navigate to a new id",
- * shared by {@link useSearchHref} and the search box.
+ * version it holds), plus the dashboards' deep-link params (`vtab`, `validator`,
+ * `view` on the validators view; `feed` on the live checkpoints view). The single
+ * source of truth for "navigate to a new id", shared by {@link useSearchHref}
+ * and the search box.
  */
 export function withSearch(
   current: URLSearchParams,
@@ -48,6 +49,7 @@ export function withSearch(
   next.delete('vtab')
   next.delete('validator')
   next.delete('view')
+  next.delete('feed')
   return next
 }
 
@@ -70,6 +72,7 @@ export function useValidatorHref() {
     next.delete('version')
     next.delete('vtab')
     next.delete('view')
+    next.delete('feed')
     return `?${next.toString()}`
   }
 }

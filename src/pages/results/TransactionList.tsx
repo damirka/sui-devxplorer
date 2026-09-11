@@ -37,6 +37,7 @@ export function TransactionList({
           digest={tx.digest}
           timestamp={tx.timestamp}
           sender={showSender ? tx.sender : null}
+          senderName={tx.senderName}
           status={tx.status}
           gas={tx.gas}
         />

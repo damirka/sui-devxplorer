@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Fuel } from 'lucide-react'
+import { AddressLink } from '@/components/ui/AddressLink'
 import { RowIndex } from '@/components/ui/RowIndex'
 import { LinkedHash } from '@/components/ui/links'
 import { formatSui, formatTimestamp } from '@/lib/format'
@@ -38,6 +39,7 @@ export function TransactionRow({
   digest,
   timestamp,
   sender,
+  senderName,
   status,
   gas,
   children,
@@ -46,8 +48,11 @@ export function TransactionRow({
   /** Tx digest; rendered as `—` when unknown. */
   digest: string | null
   timestamp: string | null
-  /** Sender address, shown as `by <hash>`; omit/null to hide. */
+  /** Sender address, shown as `by <name or hash>`; omit/null to hide. */
   sender?: string | null
+  /** The sender's default SuiNS name when the list fetched it inline (`null` =
+   *  known to have none); omit to resolve it lazily through the shared cache. */
+  senderName?: string | null
   status: string | null
   /** Net gas used in MIST. Omit to hide the cell; `null` shows `—` (unknown). */
   gas?: bigint | null
@@ -68,7 +73,7 @@ export function TransactionRow({
       {children}
       {sender && (
         <span className="text-muted inline-flex shrink-0 items-center gap-1.5">
-          by <LinkedHash value={sender} />
+          by <AddressLink value={sender} name={senderName} />
         </span>
       )}
       {gas !== undefined && (

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Hash } from '@/components/ui/Hash'
+import { AddressLink } from '@/components/ui/AddressLink'
 import { LinkedHash } from '@/components/ui/links'
 import { Field, FieldGrid, Muted } from '@/components/ui/Field'
 import { describeOwner, type SuiObject } from '@/lib/object'
@@ -74,7 +75,12 @@ export function ObjectOverview({
             {owner.address ? (
               <span className="flex items-center gap-2">
                 <span className="text-muted text-xs">{owner.kind}</span>
-                <LinkedHash value={owner.address} />
+                {/* An address owner may carry a SuiNS name; an object parent can't. */}
+                {owner.kind === 'object' ? (
+                  <LinkedHash value={owner.address} />
+                ) : (
+                  <AddressLink value={owner.address} />
+                )}
               </span>
             ) : (
               <span className="font-mono text-sm">{owner.kind}</span>

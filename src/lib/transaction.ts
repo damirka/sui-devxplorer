@@ -14,6 +14,7 @@ import { fromBase64 } from '@mysten/sui/utils'
 import { gqlRequest } from './graphql'
 import { escapeRegExp } from './format'
 import { fetchObjectTypes } from './object'
+import { primeSuinsNames } from './suins'
 import { netGasUsed, type GasSummary } from './gas'
 import { mapBackwardPage, type Page, type PageArgs } from './pagination'
 import type { MoveFunctionSignature } from './move'
@@ -975,10 +976,11 @@ query TxList($filter: TransactionFilter, $last: Int, $before: String) {
     nodes {
       digest
       kind { __typename }
-      sender { address }
+      sender { address defaultNameRecord { domain } }
       effects {
         status
         timestamp
+        checkpoint { sequenceNumber }
         gasEffects { gasSummary { computationCost storageCost storageRebate } }
       }
     }
@@ -995,13 +997,26 @@ export type TxFilter =
   | { function: string }
   /** Transactions sealed in a given checkpoint, by sequence number. */
   | { atCheckpoint: number }
+  /** Every transaction of one kind, network-wide — `PROGRAMMABLE_TX` for user
+   *  PTBs (the live feed), `SYSTEM_TX` for the consensus / epoch machinery. */
+  | { kind: TxKind }
+
+/** The two `TransactionKindInput` buckets: user PTBs vs. everything the system
+ *  injects (consensus prologues, epoch changes, randomness / authenticator
+ *  updates, system PTBs). */
+export type TxKind = 'PROGRAMMABLE_TX' | 'SYSTEM_TX'
 
 export interface TxListItem {
   digest: string
   kind: string | null
   sender: string | null
+  /** The sender's default SuiNS name (`.sui` domain), fetched inline; `null`
+   *  when it has none (or there's no sender). */
+  senderName: string | null
   status: string | null
   timestamp: string | null
+  /** The checkpoint that sealed it; `null` if not yet checkpointed / unknown. */
+  checkpoint: number | null
   /** Net gas used (computation + storage − rebate, in MIST); null if unknown. */
   gas: bigint | null
 }
@@ -1012,10 +1027,11 @@ interface TxListResult {
     nodes: {
       digest: string
       kind: { __typename: string } | null
-      sender: { address: string } | null
+      sender: { address: string; defaultNameRecord: { domain: string } | null } | null
       effects: {
         status: string | null
         timestamp: string | null
+        checkpoint: { sequenceNumber: number } | null
         gasEffects: { gasSummary: GasSummary | null } | null
       } | null
     }[]
@@ -1044,14 +1060,26 @@ export async function fetchTransactions(
     { filter, last: args.limit, before: args.cursor ?? null },
     signal,
   )
-  const page = mapBackwardPage(data.transactions, (n) => ({
-    digest: n.digest,
-    kind: n.kind?.__typename ?? null,
-    sender: n.sender?.address ?? null,
-    status: n.effects?.status ?? null,
-    timestamp: n.effects?.timestamp ?? null,
-    gas: netGasUsed(n.effects?.gasEffects?.gasSummary),
-  }))
+  const page = mapBackwardPage(data.transactions, (n): TxListItem => {
+    const cp = n.effects?.checkpoint?.sequenceNumber
+    return {
+      digest: n.digest,
+      kind: n.kind?.__typename ?? null,
+      sender: n.sender?.address ?? null,
+      senderName: n.sender?.defaultNameRecord?.domain ?? null,
+      status: n.effects?.status ?? null,
+      timestamp: n.effects?.timestamp ?? null,
+      checkpoint: cp == null ? null : Number(cp),
+      gas: netGasUsed(n.effects?.gasEffects?.gasSummary),
+    }
+  })
+  // The names came free with the list — seed the shared reverse cache so any
+  // other `AddressLink` for these senders (a detail panel, another list)
+  // renders them without a lookup.
+  primeSuinsNames(
+    network,
+    page.items.flatMap((t) => (t.sender ? [[t.sender, t.senderName] as [string, string | null]] : [])),
+  )
   // The `function` filter yields one node per matching Move call, so a PTB that
   // calls into the package several times repeats the same digest. Collapse to one
   // row per transaction (a tx list shows each tx once). Dedup is per page, so a
@@ -1065,6 +1093,27 @@ export async function fetchTransactions(
 function dedupeByDigest<T extends { digest: string }>(items: T[]): T[] {
   const seen = new Set<string>()
   return items.filter((t) => !seen.has(t.digest) && seen.add(t.digest))
+}
+
+/**
+ * The most recent `count` programmable transactions network-wide, newest first —
+ * the live transaction feed. System transactions (consensus prologues, epoch
+ * changes, randomness / authenticator updates) are excluded by the `kind`
+ * filter, so what's left is user activity. `count` is capped at the service's
+ * 50-item page limit.
+ */
+export async function fetchRecentTransactions(
+  network: Network,
+  count: number,
+  signal?: AbortSignal,
+): Promise<TxListItem[]> {
+  const page = await fetchTransactions(
+    network,
+    { kind: 'PROGRAMMABLE_TX' },
+    { limit: Math.min(count, 50) },
+    signal,
+  )
+  return page.items
 }
 
 /* ─────────────────────── recent success rate ─────────────────────── */

@@ -1,8 +1,11 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Pause } from 'lucide-react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { ErrorText } from '@/components/ui/ErrorText'
 import { SkeletonLines } from '@/components/ui/Skeleton'
+import { TabButton } from '@/components/ui/TabButton'
 import { useNetwork } from '@/context/useNetwork'
 import { usePolledAsync } from '@/lib/useAsync'
 import { useNow } from '@/lib/useNow'
@@ -14,33 +17,83 @@ import {
   fetchThroughput,
   livenessForLag,
   tipLagMs,
+  type CheckpointSummary,
   type CheckpointTip,
   type Liveness,
 } from '@/lib/checkpoint'
+import { fetchRecentTransactions, type TxListItem } from '@/lib/transaction'
+import type { Network } from '@/context/network-context'
 import { LivenessBanner } from './LivenessBanner'
 import { CheckpointRow } from './CheckpointRow'
+import { TransactionFeedRow } from './TransactionFeedRow'
 
-// Checkpoints land every ~0.2–0.3s, so a 2s refresh turns the window over almost
-// entirely each tick — which is why expanding a row *freezes* the feed (below).
-// The tip poll and the 1s wall-clock tick keep the verdict current.
+// Checkpoints land every ~0.2–0.3s — and programmable transactions many times
+// faster — so a 2s refresh turns the window over almost entirely each tick,
+// which is why expanding a row *freezes* the feed (below). The tip poll and the
+// 1s wall-clock tick keep the verdict current.
 const POLL_MS = 2_000
 const PAGE_SIZES = [10, 25, 50]
 
+/** What the live feed lists: sealed checkpoints, or the programmable (user)
+ *  transactions inside them — system transactions excluded. Shareable as
+ *  `?feed=txs`; checkpoints is the default and adds no param. */
+type FeedMode = 'checkpoints' | 'txs'
+
+const FEED_TABS: { mode: FeedMode; label: string }[] = [
+  { mode: 'checkpoints', label: 'checkpoints' },
+  { mode: 'txs', label: 'transactions' },
+]
+
+/** One polled window of the feed, tagged with the mode that produced it. The
+ *  hook keeps stale data across a reload, so right after a switch it still
+ *  holds the *other* mode's rows — the tag is what stops those rendering under
+ *  the new tab. */
+type FeedWindow =
+  | { mode: 'checkpoints'; rows: CheckpointSummary[] }
+  | { mode: 'txs'; rows: TxListItem[] }
+
+async function fetchFeed(
+  network: Network,
+  mode: FeedMode,
+  count: number,
+  signal: AbortSignal,
+): Promise<FeedWindow> {
+  return mode === 'txs'
+    ? { mode, rows: await fetchRecentTransactions(network, count, signal) }
+    : { mode, rows: await fetchRecentCheckpoints(network, count, signal) }
+}
+
 /**
  * Network-liveness dashboard. A tiny always-live poll of the chain tip drives the
- * liveness verdict (so it stays honest no matter what), while the heavier feed of
- * recent checkpoints — each expandable to its detail and the transactions it
- * sealed — *freezes* whenever a row is open, so the checkpoint you're inspecting
- * holds still instead of scrolling out from under you.
+ * liveness verdict (so it stays honest no matter what), while the heavier feed —
+ * the recent checkpoints, or (switchable) the recent programmable transactions,
+ * each row expandable to its detail — *freezes* whenever a row is open, so the
+ * thing you're inspecting holds still instead of scrolling out from under you.
  */
 export function CheckpointsView() {
   const { network } = useNetwork()
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Checkpoints or transactions — kept in the URL so the feed you're watching is
+  // a shareable link (and survives a reload).
+  const mode: FeedMode = searchParams.get('feed') === 'txs' ? 'txs' : 'checkpoints'
 
-  // One checkpoint can be expanded at a time; while one is, the feed is frozen.
-  const [openSeq, setOpenSeq] = useState<number | null>(null)
-  const frozen = openSeq != null
-  // How many recent checkpoints the live feed shows (a "last N" window, not paging).
+  // One row can be expanded at a time; while one is, the feed is frozen. Keyed
+  // by row identity (`cp:<seq>` / `tx:<digest>`) so both feeds share one freeze.
+  const [openKey, setOpenKey] = useState<string | null>(null)
+  const frozen = openKey != null
+  const toggle = (key: string) => setOpenKey((k) => (k === key ? null : key))
+  // How many recent rows the live feed shows (a "last N" window, not paging).
   const [count, setCount] = useState(10)
+
+  const setMode = (next: FeedMode) => {
+    if (next === mode) return
+    const p = new URLSearchParams(searchParams)
+    if (next === 'txs') p.set('feed', 'txs')
+    else p.delete('feed')
+    setSearchParams(p)
+    // Switching lists closes whatever was open, releasing the freeze.
+    setOpenKey(null)
+  }
 
   // Liveness heartbeat — cheap, and never pauses (even while the feed is frozen),
   // so the banner verdict always reflects the real chain tip.
@@ -57,11 +110,11 @@ export function CheckpointsView() {
     POLL_MS,
   )
   // The inspectable feed — paused (pollMs → null) whenever a row is open. Toggling
-  // pollMs only re-arms the poll interval; the primary load keys on `[network]`,
-  // so the frozen rows are preserved, not refetched.
+  // pollMs only re-arms the poll interval; the primary load keys on the query
+  // identity, so the frozen rows are preserved, not refetched.
   const feed = usePolledAsync(
-    (signal) => fetchRecentCheckpoints(network, count, signal),
-    [network, count],
+    (signal) => fetchFeed(network, mode, count, signal),
+    [network, mode, count],
     frozen ? null : POLL_MS,
   )
   // A 1s clock so the tip "age" / verdict keep advancing between 2s polls — and
@@ -77,45 +130,98 @@ export function CheckpointsView() {
     60_000,
   )
 
-  if (feed.loading && !feed.data) {
-    return (
-      <div className="space-y-6">
-        <div className="border-line bg-surface h-[4.75rem] border" />
-        <Panel>
-          <PanelSection label="Recent checkpoints" index={1}>
-            <SkeletonLines count={8} />
-          </PanelSection>
-        </Panel>
-      </div>
-    )
-  }
+  // The window for the mode being shown — `null` until this mode's first load
+  // lands (the hook may still hold the previous mode's rows meanwhile).
+  const current = feed.data?.mode === mode ? feed.data : null
+  const noun = mode === 'txs' ? 'transactions' : 'checkpoints'
 
-  if (feed.error || !feed.data || feed.data.length === 0) {
+  // Verdict from the live tip poll; fall back to the checkpoint feed's newest
+  // row until the first tip resolves, so the banner never blanks on initial paint.
+  const newestCp = current?.mode === 'checkpoints' ? (current.rows[0] ?? null) : null
+  const head: CheckpointTip | null =
+    tip.data ??
+    (newestCp
+      ? {
+          sequenceNumber: newestCp.sequenceNumber,
+          timestamp: newestCp.timestamp,
+          epochId: newestCp.epochId,
+          signers: newestCp.signers,
+        }
+      : null)
+
+  if (!head) {
+    // Nothing to anchor the banner on yet: a placeholder while the first tip /
+    // feed loads, or the empty state once neither could be fetched.
+    if (tip.loading || feed.loading) {
+      return (
+        <div className="space-y-6">
+          <div className="border-line bg-surface h-[4.75rem] border" />
+          <Panel>
+            <PanelSection label="Live feed" index={1}>
+              <SkeletonLines count={8} />
+            </PanelSection>
+          </Panel>
+        </div>
+      )
+    }
     return (
       <EmptyState title="checkpoints unavailable">
-        {feed.error ? feed.error.message : 'no checkpoints returned for this network.'}
+        {tip.error?.message ??
+          feed.error?.message ??
+          'no checkpoints returned for this network.'}
       </EmptyState>
     )
   }
 
-  // Verdict from the live tip poll; fall back to the feed's newest row until the
-  // first tip resolves, so the banner never blanks on initial paint.
-  const head: CheckpointTip | null =
-    tip.data ??
-    (feed.data[0]
-      ? {
-          sequenceNumber: feed.data[0].sequenceNumber,
-          timestamp: feed.data[0].timestamp,
-          epochId: feed.data[0].epochId,
-          signers: feed.data[0].signers,
-        }
-      : null)
-  const lag = head ? tipLagMs(head.timestamp, now) : null
+  const lag = tipLagMs(head.timestamp, now)
   // A tip we can't date is treated as stalled — we have no evidence it's live.
   const status: Liveness = lag == null ? 'stalled' : livenessForLag(lag)
   // Time left until the scheduled next-epoch boundary (counts down via `now`).
   const nextEpochInMs =
     chain.data?.nextEpochMs != null ? chain.data.nextEpochMs - now : null
+
+  let body: ReactNode
+  if (!current) {
+    body = feed.error ? <ErrorText error={feed.error} /> : <SkeletonLines count={8} />
+  } else if (current.rows.length === 0) {
+    body = <span className="text-muted text-sm">no {noun} returned for this network.</span>
+  } else if (current.mode === 'checkpoints') {
+    body = (
+      <ul className="divide-line divide-y font-mono text-xs">
+        {current.rows.map((cp, i) => {
+          const key = `cp:${cp.sequenceNumber}`
+          return (
+            <CheckpointRow
+              key={cp.sequenceNumber}
+              index={i + 1}
+              cp={cp}
+              now={now}
+              open={openKey === key}
+              onToggle={() => toggle(key)}
+            />
+          )
+        })}
+      </ul>
+    )
+  } else {
+    body = (
+      <ul className="divide-line divide-y font-mono text-xs">
+        {current.rows.map((tx, i) => {
+          const key = `tx:${tx.digest}`
+          return (
+            <TransactionFeedRow
+              key={tx.digest}
+              index={i + 1}
+              tx={tx}
+              now={now}
+              open={openKey === key}
+              onToggle={() => toggle(key)}
+            />
+          )
+        })}
+      </ul>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -130,13 +236,13 @@ export function CheckpointsView() {
       />
       <Panel>
         <PanelSection
-          label="Recent checkpoints"
+          label="Live feed"
           index={1}
           action={
             frozen ? (
               <button
                 type="button"
-                onClick={() => setOpenSeq(null)}
+                onClick={() => setOpenKey(null)}
                 className="text-danger inline-flex items-center gap-1.5 font-mono text-xs hover:underline"
                 title="resume live updates"
               >
@@ -147,27 +253,22 @@ export function CheckpointsView() {
             )
           }
         >
-          <ul className="divide-line divide-y font-mono text-xs">
-            {feed.data.map((cp, i) => (
-              <CheckpointRow
-                key={cp.sequenceNumber}
-                index={i + 1}
-                cp={cp}
-                now={now}
-                open={openSeq === cp.sequenceNumber}
-                onToggle={() =>
-                  setOpenSeq((s) => (s === cp.sequenceNumber ? null : cp.sequenceNumber))
-                }
-              />
+          {/* Checkpoints vs. transactions — the same tab strip the tx panels use. */}
+          <div className="border-line mb-4 flex gap-1 border-b">
+            {FEED_TABS.map((t) => (
+              <TabButton key={t.mode} active={mode === t.mode} onClick={() => setMode(t.mode)}>
+                {t.label}
+              </TabButton>
             ))}
-          </ul>
+          </div>
+          {body}
         </PanelSection>
       </Panel>
     </div>
   )
 }
 
-/** A 10/25/50 toggle for how many recent checkpoints the live feed shows. */
+/** A 10/25/50 toggle for how many recent rows the live feed shows. */
 function PageSizeSwitch({
   value,
   onChange,
@@ -178,7 +279,7 @@ function PageSizeSwitch({
   return (
     <div
       role="group"
-      aria-label="checkpoints shown"
+      aria-label="rows shown"
       className="inline-flex items-center gap-1 font-mono text-xs"
     >
       {PAGE_SIZES.map((n) => (
