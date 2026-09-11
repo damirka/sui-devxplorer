@@ -1,7 +1,8 @@
 /**
  * SuiNS name resolution over Sui GraphQL. Forward: `nameRecord(name)` accepts
- * both `@handle` and `handle.sui` and exposes the registered `target` address.
- * Reverse: an `Address.defaultNameRecord` gives the address's display name.
+ * `@handle` / `handle.sui` and, for subnames, `sub@handle` / `sub.handle.sui`,
+ * and exposes the registered `target` address. Reverse: an
+ * `Address.defaultNameRecord` gives the address's display name.
  */
 import { endpointFor, gqlRequest } from './graphql'
 import { normalizeSuiId } from './search'
@@ -24,7 +25,9 @@ export interface SuinsResolution {
 }
 
 /** Resolve a SuiNS name to its target address. `null` when the name isn't
- * registered or has no target set. */
+ * registered or has no target set. Any input shape goes: `@hop`, `hop.sui`,
+ * `earlyblumer@suigar`, `earlyblumer.suigar.sui` — it's normalised to the `@`
+ * notation the service parses (it rejects a subname written `@sub.name`). */
 export async function resolveSuinsName(
   network: Network,
   name: string,
@@ -32,7 +35,7 @@ export async function resolveSuinsName(
 ): Promise<SuinsResolution | null> {
   const { data } = await gqlRequest<{
     nameRecord: { domain: string; target: { address: string } | null } | null
-  }>(network, RESOLVE_QUERY, { name }, signal)
+  }>(network, RESOLVE_QUERY, { name: atName(name) }, signal)
   const rec = data.nameRecord
   if (!rec?.target) return null
   return { domain: rec.domain, address: rec.target.address }
@@ -73,10 +76,23 @@ export function isSuinsType(repr: string | null | undefined): boolean {
   return !!repr && /::suins_registration::SuinsRegistration$/.test(repr)
 }
 
-/** Display a domain in `@handle` form, idempotent across input shapes:
- * `0x2.sui` / `@0x2` / `0x2` → `@0x2`. */
+/**
+ * Display a domain in SuiNS `@` notation: the `@` sits between any subname
+ * labels and the registered name, so `hop.sui` → `@hop`,
+ * `earlyblumer.suigar.sui` → `earlyblumer@suigar`, `beep.bobo.kekeke.sui` →
+ * `beep.bobo@kekeke`. Idempotent across input shapes (`@hop`, `hop`,
+ * `earlyblumer@suigar`, even the legacy `@earlyblumer.suigar` all normalise the
+ * same way) — and it's the form the GraphQL `nameRecord` lookup accepts, so it
+ * doubles as the canonical query string (see {@link resolveSuinsName}).
+ */
 export function atName(domain: string): string {
-  return '@' + domain.replace(/^@/, '').replace(/\.sui$/i, '')
+  const stripped = domain.trim().replace(/\.sui$/i, '')
+  const at = stripped.lastIndexOf('@')
+  const head = at === -1 ? '' : stripped.slice(0, at)
+  const tail = at === -1 ? stripped : stripped.slice(at + 1)
+  const labels = [...head.split('.'), ...tail.split('.')].filter(Boolean)
+  const name = labels.pop() ?? ''
+  return `${labels.join('.')}@${name}`
 }
 
 /** A SuiNS registration the owner holds: the NFT id, its `.sui` domain, and its

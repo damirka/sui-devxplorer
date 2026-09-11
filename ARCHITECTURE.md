@@ -129,9 +129,13 @@ CORS is open (`*`). All of MVR sits behind `mvrSupported(network)`.
 ## SuiNS names on addresses
 
 Addresses render through `<AddressLink>` (`components/ui/AddressLink.tsx`),
-which shows the address's *default* SuiNS name (`@handle`) when it has one and
-the truncated id otherwise — the full address stays in the tooltip / copy
-button. Two ways the name gets there (`lib/suins.ts`):
+which shows the address's *default* SuiNS name when it has one and the
+truncated id otherwise — the full address stays in the tooltip / copy button.
+Names always render through `atName()` in SuiNS `@` notation: `@hop`, and for
+subnames `earlyblumer@suigar` / `beep.bobo@kekeke` (the `@` between the
+subname labels and the registered name — also the only subname form the
+`nameRecord` lookup accepts, and what `detectSearchKind` classifies as `suins`).
+Two ways the name gets there (`lib/suins.ts`):
 
 - **inline** — list queries that already return a `sender` add
   `defaultNameRecord { domain }` to it (`TX_LIST_QUERY` → `TxListItem.senderName`).

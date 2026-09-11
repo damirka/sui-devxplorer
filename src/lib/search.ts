@@ -136,8 +136,13 @@ export function detectSearchKind(input: string): SearchResultKind {
     return { kind: 'mvr', value: trimmed, raw }
   }
 
-  // SuiNS name: `@handle` or `handle.sui`. Resolved to an address at view time.
-  if (trimmed.startsWith('@') || /\.sui$/i.test(trimmed)) {
+  // SuiNS name: `@handle` / `handle.sui`, or a subname in `@` notation
+  // (`sub@handle`, `beep.bobo@handle`). Resolved to an address at view time.
+  if (
+    trimmed.startsWith('@') ||
+    /\.sui$/i.test(trimmed) ||
+    /^[a-z0-9-]+(?:\.[a-z0-9-]+)*@[a-z0-9-]+$/i.test(trimmed)
+  ) {
     return { kind: 'suins', value: trimmed, raw }
   }
 
