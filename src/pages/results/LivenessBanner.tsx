@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Pause } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { type CheckpointTip, type Liveness } from '@/lib/checkpoint'
-import { formatAge, formatCount, formatNextEpoch } from '@/lib/format'
+import { formatAge, formatCount, formatNextEpoch, formatNumber } from '@/lib/format'
 import { cn } from '@/lib/cn'
 
 const STATUS_META: Record<Liveness, { label: string; cls: string; pulse: boolean }> = {
@@ -46,11 +46,11 @@ export function LivenessBanner({
   const tpsTitle =
     txPerSec == null
       ? undefined
-      : `${Math.round(txPerSec).toLocaleString()} programmable tx/s (system txs excluded)`
+      : `${formatNumber(Math.round(txPerSec))} programmable tx/s (system txs excluded)`
   const tpmTitle =
     txPerSec == null
       ? undefined
-      : `${Math.round(txPerSec * 60).toLocaleString()} programmable tx/min (system txs excluded)`
+      : `${formatNumber(Math.round(txPerSec * 60))} programmable tx/min (system txs excluded)`
   return (
     <div className="border-line bg-surface flex flex-col gap-3 border p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
@@ -71,7 +71,7 @@ export function LivenessBanner({
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 font-mono text-xs">
-        <Stat label="tip" tone="text-primary" value={head ? `#${head.sequenceNumber.toLocaleString()}` : '—'} />
+        <Stat label="tip" tone="text-primary" value={head ? `#${formatNumber(head.sequenceNumber)}` : '—'} />
         <Stat label="age" tone={meta.cls} value={lag == null ? '—' : formatAge(lag)} />
         <Stat label="tx/s" title={tpsTitle} value={txPerSec == null ? '—' : formatCount(Math.round(txPerSec))} />
         <Stat label="tx/min" title={tpmTitle} value={txPerSec == null ? '—' : formatCount(Math.round(txPerSec * 60))} />

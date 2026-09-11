@@ -4,7 +4,7 @@ import { Hash } from '@/components/ui/Hash'
 import { RowIndex } from '@/components/ui/RowIndex'
 import { netGasUsed } from '@/lib/gas'
 import { tipLagMs, type CheckpointSummary } from '@/lib/checkpoint'
-import { formatAgeAgo, formatCount, formatSui, formatTimestamp } from '@/lib/format'
+import { formatAgeAgo, formatCount, formatNumber, formatSui, formatTimestamp } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { CheckpointTxs } from './CheckpointTxs'
 
@@ -43,7 +43,7 @@ export function CheckpointRow({
           className={cn('text-muted shrink-0 transition-transform', open && 'rotate-90')}
         />
         <span className="text-primary hash shrink-0 tabular-nums">
-          #{cp.sequenceNumber.toLocaleString()}
+          #{formatNumber(cp.sequenceNumber)}
         </span>
         <span className="text-muted shrink-0 tabular-nums">
           {formatAgeAgo(lag)}
@@ -102,7 +102,7 @@ function CheckpointDetail({ cp }: { cp: CheckpointSummary }) {
         <Field label="network txns">
           <span
             className="text-text tabular-nums"
-            title={cp.networkTotalTransactions.toLocaleString()}
+            title={formatNumber(cp.networkTotalTransactions)}
           >
             {formatCount(cp.networkTotalTransactions)}
           </span>

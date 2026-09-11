@@ -9,7 +9,7 @@ import { CopyButton } from '@/components/ui/CopyButton'
 import { CopyJsonButton } from '@/components/ui/CopyJsonButton'
 import { HoverCard } from '@/components/ui/HoverCard'
 import { LinkedHash } from '@/components/ui/links'
-import { formatCount, formatSui, formatSuiCompact, formatTokenAmount } from '@/lib/format'
+import { formatCount, formatNumber, formatSui, formatSuiCompact, formatTokenAmount } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { ADMISSION, isGasOutlier, type ValidatorSummary, type ValidatorView } from '@/lib/validators'
 import { StakeBreakdown } from './StakeBreakdown'
@@ -47,7 +47,7 @@ function pctDelta(bps: number): string | null {
 /** Signed integer delta (gas price). */
 function gasDelta(d: bigint): string | null {
   if (d === 0n) return null
-  return (d > 0n ? '+' : '−') + (d < 0n ? -d : d).toLocaleString()
+  return (d > 0n ? '+' : '−') + formatNumber(d < 0n ? -d : d)
 }
 
 /**
@@ -193,7 +193,7 @@ export function ValidatorRow({
   const gasOutlier = isGasOutlier(gasVal, referenceGasPrice)
   const gasTitle =
     gasOutlier && referenceGasPrice > 0n
-      ? `${(Number(gasVal) / Number(referenceGasPrice)).toFixed(1)}× the reference gas price (${referenceGasPrice.toLocaleString()} MIST) — drastically off the network rate`
+      ? `${(Number(gasVal) / Number(referenceGasPrice)).toFixed(1)}× the reference gas price (${formatNumber(referenceGasPrice)} MIST) — drastically off the network rate`
       : 'gas price (MIST)'
 
   // Lifecycle-risk status → tints the whole summary line (red for leaving /
@@ -275,7 +275,7 @@ export function ValidatorRow({
             {isNext && (
               <Delta text={gasDelta(v.nextEpochGasPrice - v.gasPrice)} up={v.nextEpochGasPrice > v.gasPrice} />
             )}
-            {gasVal.toLocaleString()}
+            {formatNumber(gasVal)}
           </span>
         </span>
       </Link>
@@ -346,7 +346,7 @@ function ValidatorDetail({
   const gasOutlier = isGasOutlier(v.gasPrice, referenceGasPrice)
   const gasTitle =
     gasOutlier && referenceGasPrice > 0n
-      ? `${(Number(v.gasPrice) / Number(referenceGasPrice)).toFixed(1)}× the reference gas price (${referenceGasPrice.toLocaleString()} MIST) — drastically off the network rate`
+      ? `${(Number(v.gasPrice) / Number(referenceGasPrice)).toFixed(1)}× the reference gas price (${formatNumber(referenceGasPrice)} MIST) — drastically off the network rate`
       : 'gas price (MIST)'
   // SUI value of one pool token = stake / pool tokens. Grows as rewards accrue,
   // so `(rate − 1)` is the lifetime reward yield of the pool since activation.
@@ -365,7 +365,7 @@ function ValidatorDetail({
           <span className="text-text tabular-nums">
             {pct(v.votingPower)}
             <span className="text-muted ml-1.5 text-[0.7rem]">
-              {v.votingPower.toLocaleString()} bps
+              {formatNumber(v.votingPower)} bps
             </span>
           </span>
         </Field>
@@ -387,9 +387,9 @@ function ValidatorDetail({
         </Field>
         <Field label="gas price">
           <span className={cn('tabular-nums', gasOutlier ? 'text-danger' : 'text-text')} title={gasTitle}>
-            {v.gasPrice.toLocaleString()}
+            {formatNumber(v.gasPrice)}
             {v.nextEpochGasPrice !== v.gasPrice && (
-              <NextEpoch>{v.nextEpochGasPrice.toLocaleString()}</NextEpoch>
+              <NextEpoch>{formatNumber(v.nextEpochGasPrice)}</NextEpoch>
             )}
           </span>
         </Field>

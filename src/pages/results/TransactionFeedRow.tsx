@@ -14,7 +14,7 @@ import { tipLagMs } from '@/lib/checkpoint'
 import { netGasUsed } from '@/lib/gas'
 import { cn } from '@/lib/cn'
 import { truncateMiddle } from '@/lib/search'
-import { formatAgeAgo, formatSui, formatTimestamp } from '@/lib/format'
+import { formatAgeAgo, formatNumber, formatSui, formatTimestamp } from '@/lib/format'
 import {
   fetchTransaction,
   type MoveFn,
@@ -90,7 +90,7 @@ export function TransactionFeedRow({
         )}
         <span className="text-muted ml-auto inline-flex shrink-0 items-center gap-x-4 tabular-nums">
           <span className="hidden sm:inline" title="sealed in checkpoint">
-            {tx.checkpoint == null ? '—' : `#${tx.checkpoint.toLocaleString()}`}
+            {tx.checkpoint == null ? '—' : `#${formatNumber(tx.checkpoint)}`}
           </span>
           <span
             className="inline-flex w-[8.5rem] items-center justify-end gap-1 whitespace-nowrap"
@@ -173,7 +173,7 @@ function TransactionSummary({ tx }: { tx: SuiTransaction }) {
         </Field>
         <Field label="checkpoint">
           <Value>
-            {fx?.checkpoint ? `#${fx.checkpoint.sequenceNumber.toLocaleString()}` : '—'}
+            {fx?.checkpoint ? `#${formatNumber(fx.checkpoint.sequenceNumber)}` : '—'}
           </Value>
         </Field>
         <Field label="epoch">

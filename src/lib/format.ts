@@ -57,6 +57,12 @@ export function formatSignatureType(repr: string): string {
   return formatType(repr.replace(FRAMEWORK_PREFIX, '')).replace(/\$(\d+)/g, 'T$1')
 }
 
+/** A count or integer with `en-US` thousands separators — pinned, so a row
+ *  never mixes `1.234.567` with `formatSui`'s `1,234.5`. */
+export function formatNumber(n: number | bigint): string {
+  return n.toLocaleString('en-US')
+}
+
 /**
  * Render a raw integer token amount (in the coin's smallest unit) as a decimal
  * string scaled by `decimals`, optionally suffixed with `symbol`. Negative
@@ -85,7 +91,7 @@ export function formatTokenAmount(
       ? (abs % base).toString().padStart(decimals, '0').replace(/0+$/, '')
       : ''
   const sign = neg ? '-' : ''
-  const num = `${sign}${whole.toLocaleString('en-US')}${frac ? '.' + frac : ''}`
+  const num = `${sign}${formatNumber(whole)}${frac ? '.' + frac : ''}`
   return symbol ? `${num} ${symbol}` : num
 }
 
@@ -136,7 +142,7 @@ export function formatSuiWhole(
   const base = 10n ** 9n
   // Round to the nearest whole SUI rather than truncating.
   const whole = (abs + base / 2n) / base
-  return (neg ? '−' : '') + whole.toLocaleString('en-US') + ' SUI'
+  return (neg ? '−' : '') + formatNumber(whole) + ' SUI'
 }
 
 /** Compact count: `942`, `1.2k`, `3.4M`, `1.1B`. For call counts / totals. */

@@ -37,7 +37,7 @@ import {
 import { fetchOwnedStakedSui, isStakedSuiType, type OwnedStakedSui } from '@/lib/staking'
 import { fetchValidatorPools, type ValidatorRef } from '@/lib/validators'
 import { isUpgradeCapType } from '@/lib/upgradeCap'
-import { formatSui, formatType, formatTokenAmount } from '@/lib/format'
+import { formatNumber, formatSui, formatTokenAmount, formatType } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import type { Network } from '@/context/network-context'
 import {
@@ -1122,7 +1122,7 @@ function TypesOwned({
               <div className="border-line bg-surface-2 mb-3 flex flex-wrap items-center justify-between gap-2 border px-2.5 py-2 font-mono text-xs">
                 <span className="text-muted">
                   too many objects — types cover the first{' '}
-                  {total.toLocaleString()} only.
+                  {formatNumber(total)} only.
                 </span>
                 <button
                   type="button"

@@ -12,7 +12,7 @@ import type { Network } from '@/context/network-context'
 import { usePolledAsync, useAsync } from '@/lib/useAsync'
 import { useNow } from '@/lib/useNow'
 import { cn } from '@/lib/cn'
-import { formatNextEpoch, formatSuiCompact } from '@/lib/format'
+import { formatNextEpoch, formatNumber, formatSuiCompact } from '@/lib/format'
 import {
   fetchValidatorSet,
   fetchValidatorGroup,
@@ -317,7 +317,7 @@ function ValidatorSummary({
       <div className="border-line flex flex-wrap items-center gap-x-4 gap-y-2 border-b p-4">
         <Badge>validator set</Badge>
         <span className="text-primary font-mono text-sm font-bold tracking-[0.18em]">
-          EPOCH {set.epoch.toLocaleString()}
+          EPOCH {formatNumber(set.epoch)}
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1.5">
           <span className="text-muted inline-flex items-center gap-1.5 font-mono text-xs">
@@ -361,14 +361,14 @@ function ValidatorSummary({
         />
         <StatCell
           label="ref gas"
-          value={set.referenceGasPrice.toLocaleString()}
+          value={formatNumber(set.referenceGasPrice)}
           title="network reference gas price (MIST per gas unit)"
         />
         <StatCell label="protocol" value={set.protocolVersion} title="current protocol version" />
         <StatCell
           label="storage fund"
           value={formatSuiCompact(set.storageFund)}
-          title={`${set.storageFund.toLocaleString()} MIST`}
+          title={`${formatNumber(set.storageFund)} MIST`}
         />
         <StatCell
           label="subsidy"

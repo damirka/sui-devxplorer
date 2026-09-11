@@ -24,13 +24,7 @@ import { CoinIcon } from '@/components/ui/CoinIcon'
 import { DANGER_PRE } from '@/components/ui/codeBlock'
 import { cn } from '@/lib/cn'
 import { truncateMiddle } from '@/lib/search'
-import {
-  formatSui,
-  formatTokenAmount,
-  formatTimestamp,
-  formatType,
-  formatSignatureType,
-} from '@/lib/format'
+import { formatNumber, formatSignatureType, formatSui, formatTimestamp, formatTokenAmount, formatType } from '@/lib/format'
 import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
 import { netGasUsed } from '@/lib/gas'
@@ -199,7 +193,7 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
               label="gas price"
               value={
                 gas?.gasPrice
-                  ? `${Number(gas.gasPrice).toLocaleString('en-US')} MIST`
+                  ? `${formatNumber(Number(gas.gasPrice))} MIST`
                   : '—'
               }
             />
@@ -1376,7 +1370,7 @@ function ObjectChangeItem({
 function rawAmount(raw: string | null): string {
   if (raw == null) return '—'
   try {
-    return BigInt(raw).toLocaleString('en-US')
+    return formatNumber(BigInt(raw))
   } catch {
     return raw
   }

@@ -6,7 +6,7 @@ import { usePolledAsync } from '@/lib/useAsync'
 import { useNow } from '@/lib/useNow'
 import { fetchChainStatus } from '@/lib/chain'
 import { fetchRecentCheckpoints } from '@/lib/checkpoint'
-import { formatCount, formatNextEpoch, formatSuiCompact } from '@/lib/format'
+import { formatCount, formatNextEpoch, formatNumber, formatSuiCompact } from '@/lib/format'
 
 // The feed is a tiny `last:N` query — poll it fast so the checkpoints visibly
 // arrive (the chain seals ~3–4/s, so each tick brings several new ones). The
@@ -58,7 +58,7 @@ export function LiveStrip() {
 
   // The slow epoch-level context, dropping any figure that hasn't resolved.
   const meta = [
-    epoch != null ? `epoch ${epoch.toLocaleString()}` : null,
+    epoch != null ? `epoch ${formatNumber(epoch)}` : null,
     d?.protocolVersion != null ? `v${d.protocolVersion}` : null,
     d?.totalStake != null ? `${formatSuiCompact(d.totalStake)} staked` : null,
     nextLabel != null ? `next ${nextLabel}` : null,
@@ -69,7 +69,7 @@ export function LiveStrip() {
   // climbing checkpoint (the live pulse) and the next-epoch countdown — dropping
   // the epoch number, which pushed the countdown off the edge on a narrow screen.
   const mobileLine = [
-    `#${head.sequenceNumber.toLocaleString()}`,
+    `#${formatNumber(head.sequenceNumber)}`,
     nextLabel != null ? `next ${nextLabel}` : null,
   ]
     .filter(Boolean)
@@ -110,7 +110,7 @@ export function LiveStrip() {
               {i > 0 && <span className="text-muted/30 select-none">·</span>}
               <span className="inline-flex items-baseline gap-1.5">
                 <span className="text-primary" style={{ animation: 'tipflash 1.4s ease-out' }}>
-                  #{cp.sequenceNumber.toLocaleString()}
+                  #{formatNumber(cp.sequenceNumber)}
                 </span>
                 <span className="text-muted/70">
                   {cp.txCount != null ? `${formatCount(cp.txCount)} tx` : '—'}

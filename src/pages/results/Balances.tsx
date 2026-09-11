@@ -15,7 +15,7 @@ import {
   type CoinBalance,
   type CoinMeta,
 } from '@/lib/coin'
-import { formatTokenAmount } from '@/lib/format'
+import { formatNumber, formatTokenAmount } from '@/lib/format'
 import { normalizeSuiId } from '@/lib/search'
 import type { Network } from '@/context/network-context'
 
@@ -50,7 +50,7 @@ const STANDARD_TYPES_BY_NETWORK: Record<Network, string[]> = {
 /** Grouped raw integer — fallback when a coin's decimals aren't known. */
 function rawBalance(raw: string): string {
   try {
-    return BigInt(raw).toLocaleString('en-US')
+    return formatNumber(BigInt(raw))
   } catch {
     return raw
   }
