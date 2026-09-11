@@ -49,7 +49,8 @@ src/
     layout/               AppShell (Header + <main>), Header, Logo
     bookmarks/            BookmarksHotkeys (headless `b`/`B` owner), the name popup
                           (BookmarkEditModal) and the jump list (BookmarksListModal)
-    hotkeys/              Cheatsheet — the `?` popup, rendered from lib/hotkeys.ts
+    hotkeys/              Cheatsheet — the `?` popup, rendered from lib/hotkeys.ts;
+                          NetworkHotkeys — headless `M`/`T`/`D` network switch
   pages/
     Home.tsx, Hero.tsx
     results/              ObjectView, TransactionView, PackageView, SuinsView, MvrView, NotFound
@@ -106,6 +107,9 @@ hex colors in TSX — every colour goes through a token. Theme by setting
   The only chrome for the keyboard layer is the `?` key at the header's right
   edge; the AppShell mounts the headless owners. The whole layer is desktop-only
   (`isDesktop()`, the `sm` breakpoint): inert hotkeys and a hidden `?` below it.
+  `M` / `T` / `D` switch network (`components/hotkeys/NetworkHotkeys`, the same
+  `setNetwork` as the header menu). Shifted-letter keys go through
+  `shiftedLetter()` so `B` and `b`+shift read the same.
   Bookmarks are vim-style marks (`components/bookmarks`): `b`
   bookmarks the current page (popup, name prefilled with the id and selected,
   ↵ saves, esc cancels), `B` opens the jump list (type to filter, ↑/↓ or

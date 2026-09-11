@@ -14,6 +14,19 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
 }
 
+/**
+ * The letter of a shifted-letter keystroke (`B`), uppercase — or `null`. A real
+ * keyboard reports the shifted key itself (`B`); some automation reports `b` +
+ * shiftKey. Both count. Any other modifier disqualifies.
+ */
+export function shiftedLetter(e: KeyboardEvent): string | null {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return null
+  const k = e.key
+  if (k >= 'A' && k <= 'Z') return k
+  if (e.shiftKey && k >= 'a' && k <= 'z') return k.toUpperCase()
+  return null
+}
+
 /** Tailwind's `sm` breakpoint. The keyboard layer is desktop-only — below it
  *  there's no keyboard to press these with, so hotkeys and the `?` entry point
  *  stay off. */
@@ -46,6 +59,7 @@ export const HOTKEYS: HotkeySection[] = [
       { keys: ['/', 'tab'], does: 'focus the search' },
       { keys: ['b'], does: 'bookmark this page' },
       { keys: ['B'], does: 'open bookmarks' },
+      { keys: ['M', 'T', 'D'], does: 'switch to mainnet / testnet / devnet' },
       { keys: ['?'], does: 'open / close this cheatsheet' },
       { keys: ['esc'], does: 'close a popup' },
     ],

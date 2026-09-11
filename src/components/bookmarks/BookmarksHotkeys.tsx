@@ -8,7 +8,7 @@ import {
   type Bookmark,
   type PageParams,
 } from '@/lib/bookmarks'
-import { isDesktop, isEditableTarget } from '@/lib/hotkeys'
+import { isDesktop, isEditableTarget, shiftedLetter } from '@/lib/hotkeys'
 import { BookmarkEditModal } from './BookmarkEditModal'
 import { BookmarksListModal } from './BookmarksListModal'
 
@@ -51,13 +51,11 @@ export function BookmarksHotkeys() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (open || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
-      if (!isDesktop() || isEditableTarget(e.target) || e.key.toLowerCase() !== 'b') return
-      // `B` is the shifted key on a real keyboard; some automation sends
-      // `b` + shiftKey instead — treat both as the list.
-      if (e.shiftKey || e.key === 'B') {
+      if (!isDesktop() || isEditableTarget(e.target)) return
+      if (shiftedLetter(e) === 'B') {
         e.preventDefault()
         setOpen('list')
-      } else if (canBookmark) {
+      } else if (e.key === 'b' && canBookmark) {
         e.preventDefault()
         editCurrent(false)
       }

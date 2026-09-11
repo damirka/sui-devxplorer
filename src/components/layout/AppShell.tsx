@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Header } from './Header'
 import { BookmarksHotkeys } from '@/components/bookmarks/BookmarksHotkeys'
+import { NetworkHotkeys } from '@/components/hotkeys/NetworkHotkeys'
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
@@ -12,9 +13,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col overflow-x-clip px-4 py-8 sm:px-6">
         {children}
       </main>
-      {/* The keyboard layer: a headless hotkey owner and the popups it opens.
+      {/* The keyboard layer: headless hotkey owners (and the popups they open).
           The header's `?` key (Cheatsheet) is where the keys are listed. */}
       <BookmarksHotkeys />
+      <NetworkHotkeys />
     </div>
   )
 }
