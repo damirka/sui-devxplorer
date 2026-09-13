@@ -39,6 +39,10 @@ src/
   lib/
     search.ts             detectSearchKind(), normalizeSuiId(), truncateMiddle()  ← pure, test here
     mvr.ts                Move Registry REST client (names ↔ packages, versions) — not GraphQL
+    transaction.ts        fetchTransaction(): effects from GraphQL; the definition (inputs,
+                          commands, gas) decoded locally from `transactionBcs` — see
+                          "Transaction bytes" below
+    program.ts            the Program panel's copy forms (script / TS SDK / `sui client ptb`)
     bookmarks.ts          per-network localStorage bookmark store (useSyncExternalStore) + page identity
     hotkeys.ts            the hotkey table behind the `?` cheatsheet, the gate + useKeydown
     storage.ts            guarded, typed localStorage keys (theme, network, bookmarks use it)
@@ -181,6 +185,17 @@ Two ways the name gets there (`lib/suins.ts`):
   per-tick micro-batching (one aliased `address(...)` request for every address
   asked for in the same tick, ≤ 50 each). Inline results are primed into the
   same cache (`primeSuinsNames`), so the two paths never double-fetch.
+
+## Transaction bytes: the SDK schema must track the network
+
+`lib/transaction.ts` decodes a programmable transaction's inputs and commands
+from GraphQL's `transactionBcs` with `bcs.TransactionData` from `@mysten/sui`.
+That schema is a snapshot of the wire format: a protocol upgrade that adds an
+enum variant (`WithdrawFrom::SenderAllowance` and the `Validity` expiration in
+protocol v137, for instance) makes the parse throw on every transaction using
+it. The failure is surfaced, not swallowed — `SuiTransaction.decodeError`
+renders in place of the Program / Inputs panels — so that panel means one thing:
+bump `@mysten/sui`. Devnet runs ahead of mainnet, so it breaks there first.
 
 ## Live feed (`search=checkpoints`)
 

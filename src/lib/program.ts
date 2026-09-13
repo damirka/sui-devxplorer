@@ -202,10 +202,27 @@ function inputText(
       return input.object.address
     case 'SharedInput':
       return input.address
-    case 'BalanceWithdraw': {
-      const amt = input.amount != null ? `(${input.amount})` : ''
-      return input.type ? `withdraw<${input.type.repr}>${amt}` : `withdraw${amt}`
-    }
+    case 'BalanceWithdraw':
+      return withdrawText(input)
+  }
+}
+
+type WithdrawInput = Extract<TxInput, { __typename: 'BalanceWithdraw' }>
+
+/** A withdraw input as a pseudo-Move builtin named by its source:
+ *  `withdraw<T>(amount)` from the sender, `withdraw_from_sponsor<T>(amount)`, or
+ *  `withdraw_from_allowance<T>(amount, allowance, funder)`. */
+function withdrawText(input: WithdrawInput): string {
+  const ta = input.type ? `<${input.type.repr}>` : ''
+  const amount = input.amount ?? ''
+  const src = input.source
+  switch (src.kind) {
+    case 'sender':
+      return `withdraw${ta}(${amount})`
+    case 'sponsor':
+      return `withdraw_from_sponsor${ta}(${amount})`
+    case 'allowance':
+      return `withdraw_from_allowance${ta}(${amount}, ${src.allowance}, ${src.funder})`
   }
 }
 
@@ -334,9 +351,19 @@ function inputExpr(inp: TxInput, inferredPure: string | undefined): string {
     case 'BalanceWithdraw': {
       // An address-balance withdrawal — the SDK's dedicated `withdrawal` input,
       // NOT `tx.object`. It reserves up to `amount` of `Balance<type>` (defaults
-      // to SUI) from the sender's balance accumulator.
+      // to SUI) from the sender's balance, the gas sponsor's (`from: 'sponsor'`),
+      // or a funder's under an allowance granted to the sender (`from:
+      // 'allowance'` plus the allowance id and funder; @mysten/sui ≥ 2.31).
       const amount = inp.amount != null ? `${inp.amount}n` : '/* amount */ 0n'
-      return `tx.withdrawal({ amount: ${amount}, type: ${q(inp.type?.repr ?? '0x2::sui::SUI')} })`
+      const type = q(inp.type?.repr ?? '0x2::sui::SUI')
+      const src = inp.source
+      const from =
+        src.kind === 'allowance'
+          ? `, from: 'allowance', allowance: ${q(src.allowance)}, funder: ${q(src.funder)}`
+          : src.kind === 'sponsor'
+            ? ", from: 'sponsor'"
+            : ''
+      return `tx.withdrawal({ amount: ${amount}, type: ${type}${from} })`
     }
   }
 }
@@ -782,10 +809,18 @@ function cliInput(inp: TxInput | undefined, inferred: string | undefined): strin
       }
       return `0x${base64ToHex(inp.bytes)}`
     }
-    case 'BalanceWithdraw':
+    case 'BalanceWithdraw': {
       // `sui client ptb` has no address-balance-withdrawal flag — emit an
       // obvious placeholder rather than a misleading `gas`.
-      return `<balance-withdraw ${inp.type?.repr ?? '0x2::sui::SUI'}>`
+      const src = inp.source
+      const from =
+        src.kind === 'allowance'
+          ? ` from allowance ${src.allowance}`
+          : src.kind === 'sponsor'
+            ? ' from sponsor'
+            : ''
+      return `<balance-withdraw ${inp.type?.repr ?? '0x2::sui::SUI'}${from}>`
+    }
   }
 }
 

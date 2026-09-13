@@ -10,7 +10,7 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
-    "@mysten/sui": "^2.17.0",
+    "@mysten/sui": "^2.31.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.456.0",
     "react": "^18.3.1",

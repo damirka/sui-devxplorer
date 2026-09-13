@@ -14,6 +14,7 @@ import { AddressLink } from '@/components/ui/AddressLink'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { ErrorText } from '@/components/ui/ErrorText'
 import { LinkedHash, TypeLink, useSearchHref, linkifyMoveText } from '@/components/ui/links'
 import { JsonBlock, linkifyAddresses } from '@/components/ui/JsonBlock'
 import { HoverCard } from '@/components/ui/HoverCard'
@@ -49,6 +50,7 @@ import {
   type ObjectChangeNode,
   type ObjectRemoval,
   type MoveFn,
+  type WithdrawSource,
 } from '@/lib/transaction'
 import { fetchCoinMetadata, type CoinMeta } from '@/lib/coin'
 import {
@@ -282,7 +284,20 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
         </PanelSection>
       </Panel>
 
-      {ptb ? (
+      {ptb && tx.decodeError && (
+        <Panel>
+          <PanelSection label="Program">
+            <ErrorText error={`couldn't decode the transaction bytes: ${tx.decodeError}`} />
+            <p className="text-muted mt-2 font-mono text-xs leading-relaxed">
+              inputs and commands are decoded locally with the @mysten/sui bcs
+              schema, which is behind this network&apos;s wire format — bump the
+              sdk. the effects below are unaffected.
+            </p>
+          </PanelSection>
+        </Panel>
+      )}
+
+      {ptb && !tx.decodeError && (
         <>
           <ProgramPanel
             commands={ptb.commands.nodes}
@@ -325,17 +340,17 @@ function TransactionBody({ tx }: { tx: SuiTransaction }) {
             </section>
           </Panel>
         </>
-      ) : (
-        kind && (
-          <Panel>
-            <PanelSection label="Kind">
-              <span className="font-mono text-sm">{kind.__typename}</span>
-              <p className="text-muted mt-2 text-sm">
-                a system transaction — no programmable block.
-              </p>
-            </PanelSection>
-          </Panel>
-        )
+      )}
+
+      {!ptb && kind && (
+        <Panel>
+          <PanelSection label="Kind">
+            <span className="font-mono text-sm">{kind.__typename}</span>
+            <p className="text-muted mt-2 text-sm">
+              a system transaction — no programmable block.
+            </p>
+          </PanelSection>
+        </Panel>
       )}
 
       {fx && (
@@ -450,6 +465,12 @@ function InputValue({ input }: { input: TxInput }) {
         return (
           <span className="flex flex-wrap items-center gap-2">
             <Tag>withdraw</Tag>
+            {input.amount != null && (
+              <span className="text-text">
+                {withdrawAmountText(input.amount, input.type?.repr)}
+              </span>
+            )}
+            <WithdrawSourceText source={input.source} />
           </span>
         )
     }
@@ -465,6 +486,35 @@ function InputValue({ input }: { input: TxInput }) {
       )}
     </span>
   )
+}
+
+/** A withdraw reservation as `0.1 SUI` for SUI, else the raw base-unit amount
+ *  (other coins' decimals aren't known here — the type line names the coin). */
+function withdrawAmountText(amount: string, typeRepr: string | undefined): string {
+  if (typeRepr && /^0x0*2::sui::SUI$/.test(typeRepr)) return formatSui(amount)
+  try {
+    return formatNumber(BigInt(amount))
+  } catch {
+    return amount
+  }
+}
+
+/** Whose balance a withdraw input draws from — allowance and funder linked. */
+function WithdrawSourceText({ source }: { source: WithdrawSource }) {
+  switch (source.kind) {
+    case 'sender':
+      return <span className="text-muted">from sender</span>
+    case 'sponsor':
+      return <span className="text-muted">from sponsor</span>
+    case 'allowance':
+      return (
+        <span className="text-muted flex flex-wrap items-center gap-1.5">
+          via allowance <LinkedHash value={source.allowance} />
+          <span>·</span>
+          funder <LinkedHash value={source.funder} />
+        </span>
+      )
+  }
 }
 
 /**

@@ -109,11 +109,23 @@ export type TxInput =
   | { __typename: 'Receiving'; object: InputObject }
   | {
       __typename: 'BalanceWithdraw'
-      /** The withdrawn `Balance<T>` type (`typeArg`), or `null`. */
+      /** The withdrawn coin type — the `T` of `Balance<T>` (`typeArg`) — or `null`. */
       type: { repr: string } | null
       /** The reserved amount (`MaxAmountU64`, a u64 string), or `null`. */
       amount: string | null
+      /** Whose balance the funds leave. */
+      source: WithdrawSource
     }
+
+/**
+ * Where a balance withdrawal draws from: the sender, the gas sponsor, or —
+ * since protocol v137 — a funder's balance under an `0x2::allowance::Allowance`
+ * granted to the sender (`WithdrawFrom::SenderAllowance`).
+ */
+export type WithdrawSource =
+  | { kind: 'sender' }
+  | { kind: 'sponsor' }
+  | { kind: 'allowance'; funder: string; allowance: string }
 
 /** The non-programmable `TransactionKind` members — system transactions. */
 export type SystemTransactionKind =
@@ -194,6 +206,13 @@ interface Connection<T> {
 export interface SuiTransaction {
   digest: string | null
   sender: { address: string } | null
+  /**
+   * Why a programmable transaction's definition couldn't be decoded from its
+   * `transactionBcs` (its `inputs`/`commands` are then empty), or `null`. In
+   * practice: the installed `@mysten/sui` BCS schema is behind the network's
+   * wire format — an enum variant it doesn't know yet — and needs a bump.
+   */
+  decodeError: string | null
   gasInput: {
     gasSponsor: { address: string } | null
     gasPrice: string | null
@@ -259,6 +278,7 @@ export async function fetchTransaction(
   const result: SuiTransaction = {
     digest: tx.digest,
     sender: tx.sender,
+    decodeError: null,
     gasInput: null,
     // System kinds aren't BCS-decodable; carry the discriminator straight through.
     kind:
@@ -270,10 +290,18 @@ export async function fetchTransaction(
 
   if (tx.kind?.__typename !== 'ProgrammableTransaction') return result
 
-  const v1 =
-    typeof tx.transactionBcs === 'string' ? decodeTxData(tx.transactionBcs) : null
+  const decoded =
+    typeof tx.transactionBcs === 'string'
+      ? decodeTxData(tx.transactionBcs)
+      : { v1: null, error: 'the response carried no transactionBcs' }
+  const v1 = decoded.v1
   const ptb = v1?.kind?.ProgrammableTransaction
   const gas = v1?.gasData
+  // A programmable transaction whose bytes didn't parse still renders its
+  // effects, with the reason in place of the program — never a silent "no inputs".
+  result.decodeError = ptb
+    ? null
+    : (decoded.error ?? 'transactionBcs decoded without a programmable block')
 
   if (gas) {
     result.gasInput = {
@@ -357,8 +385,14 @@ type BcsInput =
       FundsWithdrawal: {
         typeArg?: { Balance?: string }
         reservation?: { MaxAmountU64?: string }
+        withdrawFrom?: BcsWithdrawFrom
       }
     }
+
+type BcsWithdrawFrom =
+  | { $kind: 'Sender' }
+  | { $kind: 'Sponsor' }
+  | { $kind: 'SenderAllowance'; SenderAllowance: { funder: string; allowance: string } }
 
 interface BcsMoveCall {
   package: string
@@ -385,16 +419,20 @@ interface BcsTransactionDataV1 {
   kind: { ProgrammableTransaction?: { inputs: BcsInput[]; commands: BcsCommand[] } }
 }
 
-/** Decode the transaction definition from base64 BCS; `null` if the SDK schema
- *  can't parse it (e.g. a system-transaction kind it doesn't model). */
-function decodeTxData(transactionBcs: string): BcsTransactionDataV1 | null {
+/** Decode the transaction definition from base64 BCS. `error` carries the SDK's
+ *  message when its schema can't parse the bytes — a system-transaction kind it
+ *  doesn't model, or a wire format newer than the installed `@mysten/sui` (e.g.
+ *  `Unknown value 2 for enum WithdrawFrom` before 2.31.0 added `SenderAllowance`). */
+function decodeTxData(
+  transactionBcs: string,
+): { v1: BcsTransactionDataV1 | null; error: string | null } {
   try {
     const decoded = bcs.TransactionData.fromBase64(transactionBcs) as {
       V1?: BcsTransactionDataV1
     }
-    return decoded.V1 ?? null
-  } catch {
-    return null
+    return { v1: decoded.V1 ?? null, error: null }
+  } catch (e) {
+    return { v1: null, error: e instanceof Error ? e.message : String(e) }
   }
 }
 
@@ -459,7 +497,12 @@ function buildInputs(
       const w = inp.FundsWithdrawal
       const repr = w?.typeArg?.Balance ?? null
       const amount = w?.reservation?.MaxAmountU64 ?? null
-      return { __typename: 'BalanceWithdraw', type: repr ? { repr } : null, amount }
+      return {
+        __typename: 'BalanceWithdraw',
+        type: repr ? { repr } : null,
+        amount,
+        source: withdrawSource(w?.withdrawFrom),
+      }
     }
     const o = inp.Object
     if (o.$kind === 'SharedObject') {
@@ -476,6 +519,19 @@ function buildInputs(
     }
     return { __typename: 'OwnedOrImmutable', object: objRefToInput(o.ImmOrOwnedObject, objTypes) }
   })
+}
+
+/** Map the BCS `WithdrawFrom` onto `WithdrawSource`; an absent variant reads
+ *  as the sender (the original, pre-sponsor default). */
+function withdrawSource(from: BcsWithdrawFrom | undefined): WithdrawSource {
+  if (from?.$kind === 'SenderAllowance') {
+    return {
+      kind: 'allowance',
+      funder: from.SenderAllowance.funder,
+      allowance: from.SenderAllowance.allowance,
+    }
+  }
+  return { kind: from?.$kind === 'Sponsor' ? 'sponsor' : 'sender' }
 }
 
 /** Build the `TxCommand` list, attaching each MoveCall's resolved signature

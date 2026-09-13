@@ -230,6 +230,8 @@ function TransactionSummary({ tx }: { tx: SuiTransaction }) {
                 </MenuRow>
               ))}
             </ol>
+          ) : tx.decodeError ? (
+            <ErrorText error={`couldn't decode the transaction bytes: ${tx.decodeError}`} />
           ) : (
             <Muted>no commands.</Muted>
           )
