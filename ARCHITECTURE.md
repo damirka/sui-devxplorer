@@ -18,7 +18,9 @@ query params, not by the path:
 - `?network=<mainnet|testnet|devnet|localnet>` — omitted when `mainnet`.
 - Dashboard sub-state rides along too: `?feed=txs` flips the live checkpoints
   view (`search=checkpoints`) to its programmable-transactions feed; the
-  validators view keeps its tab / opened row in `vtab`, `validator`, `view`.
+  validators view keeps its tab / opened row in `vtab`, `validator`, `view`;
+  an address's owned-objects view keeps its filter and status facet in
+  `owned` / `facet` (so back from a row lands on the list, scrolled to it).
   `withSearch()` (in `components/ui/links.tsx`) drops all of these when
   navigating to another entity — add any new dashboard param there.
 
@@ -43,6 +45,9 @@ src/
                           commands, gas) decoded locally from `transactionBcs` — see
                           "Transaction bytes" below
     program.ts            the Program panel's copy forms (script / TS SDK / `sui client ptb`)
+    allowance.ts          native allowances (0x2::allowance): type predicates, Move-JSON parser,
+                          status, and the funder → allowances join (AllowanceCap → extract →
+                          asAddress → asObject, one request per 50 caps)
     bookmarks.ts          per-network localStorage bookmark store (useSyncExternalStore) + page identity
     hotkeys.ts            the hotkey table behind the `?` cheatsheet, the gate + useKeydown
     storage.ts            guarded, typed localStorage keys (theme, network, bookmarks use it)
@@ -108,6 +113,14 @@ hex colors in TSX — every colour goes through a token. Theme by setting
   block caret, not motion.
 - **Identifiers** render through `<Hash>` (truncated middle + copy). Normalize
   ids with `normalizeSuiId`.
+- **Timestamps in object JSON:** any `*timestamp_ms` field renders green with
+  the UTC time (and how far from now) in its tooltip — a name heuristic in
+  `JsonTree`, so it applies to every fields view without per-type code.
+- **Status facets** on the owned-object views that hold their full set in
+  memory (allowances, upgrade caps by policy, MVR packages by assignment, SuiNS
+  names, staked SUI): a `FacetStrip` of tabs with
+  counts above the rows; filtering is client-side, since status lives in Move
+  contents the API can't filter on.
 - **Keyboard:** `/` and `Tab` focus the search globally (see `SearchBar`); the
   hero caret is a custom overlay because native carets can't be thickened.
   `?` opens the cheatsheet (`components/hotkeys/Cheatsheet`) — it renders the

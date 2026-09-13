@@ -6,6 +6,7 @@
  */
 import { gqlRequest } from './graphql'
 import { normalizeSuiId } from './search'
+import { bigOrZero } from './moveJson'
 import type { Network } from '@/context/network-context'
 
 /** The on-chain `StakedSui` type (same id on every network). */
@@ -40,19 +41,6 @@ query OwnedStaked($address: SuiAddress!, $type: String!, $after: String) {
   }
 }
 `
-
-/** A u64-as-string (or number) → `bigint`; `0n` when absent/unparseable. */
-function bigOrZero(v: unknown): bigint {
-  if (typeof v === 'number') return BigInt(Math.trunc(v))
-  if (typeof v === 'string' && v.trim() !== '') {
-    try {
-      return BigInt(v)
-    } catch {
-      return 0n
-    }
-  }
-  return 0n
-}
 
 function parseStaked(node: {
   address: string

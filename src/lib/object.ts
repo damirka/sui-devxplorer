@@ -8,6 +8,7 @@ import { gqlRequest } from './graphql'
 import { isUpgradeCapType, upgradeCapData } from './upgradeCap'
 import { netGasUsed, type GasSummary } from './gas'
 import {
+  drainPages,
   mapBackwardPage,
   mapPage,
   type Page,
@@ -1155,7 +1156,7 @@ export interface OwnedUpgradeCapNode {
  * an object — ownership is by address, so an object id works as the owner too).
  * `limit` is capped at 50 by the service. Empty page when the owner holds none.
  */
-export async function fetchOwnedUpgradeCaps(
+async function fetchOwnedUpgradeCaps(
   network: Network,
   ownerId: string,
   args: PageArgs,
@@ -1182,6 +1183,100 @@ export async function fetchOwnedUpgradeCaps(
     type: n.contents?.type.repr ?? null,
     json: n.contents?.json ?? null,
   }))
+}
+
+/** Every UpgradeCap an owner holds — all pages — for the owned-objects view,
+ *  which facets over the full set (caps per owner are few, so this is cheap). */
+export function fetchAllOwnedUpgradeCaps(
+  network: Network,
+  ownerId: string,
+  signal?: AbortSignal,
+): Promise<OwnedUpgradeCapNode[]> {
+  return drainPages((args) => fetchOwnedUpgradeCaps(network, ownerId, args, signal))
+}
+
+// A Move Registry app registration (`app_record::AppCap`): its Move contents
+// carry the name as parts (`name.org.labels`, TLD-first, + `name.app`); its
+// Display renders the name (`@org/app`). Both are pulled so the name reads from
+// Display and falls back to the parts.
+const OWNED_MVR_APPS_QUERY = `
+query OwnedMvrApps($address: SuiAddress!, $type: String!, $first: Int, $after: String) {
+  address(address: $address) {
+    objects(first: $first, after: $after, filter: { type: $type }) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        address
+        contents { json display { output } }
+      }
+    }
+  }
+}
+`
+
+export interface OwnedMvrApp {
+  /** The AppCap object's own id. */
+  address: string
+  /** The registered app name, `@org/app`. */
+  name: string
+}
+
+/** The `@org/app` name an AppCap carries: from its Display when rendered, else
+ *  rebuilt from the name parts (`labels` are TLD-first: `["sui","pkg"]` → `@pkg`). */
+function mvrAppName(json: unknown, display: unknown): string | null {
+  const d = display as { name?: unknown } | null
+  if (d && typeof d.name === 'string' && d.name.startsWith('@')) return d.name
+  const j = json as {
+    display?: { title?: unknown }
+    name?: { org?: { labels?: unknown }; app?: unknown }
+  } | null
+  const title = j?.display?.title
+  if (typeof title === 'string' && title.startsWith('@')) return title
+  const labels = j?.name?.org?.labels
+  const app = j?.name?.app
+  if (Array.isArray(labels) && labels.length >= 2 && Array.isArray(app) && app.length > 0) {
+    return `@${labels.slice(1).reverse().join('.')}/${app.join('/')}`
+  }
+  return null
+}
+
+interface OwnedMvrAppNode {
+  address: string
+  contents: { json: unknown; display: { output: unknown } | null } | null
+}
+
+/**
+ * Every MVR app registration (AppCap of `type` — the network's AppCap type as
+ * seen by the ownership scan) an owner holds, all pages, sorted by name. The
+ * package each name points at is resolved separately (`resolveMvrNamesBulk`).
+ */
+export async function fetchOwnedMvrApps(
+  network: Network,
+  ownerId: string,
+  type: string,
+  signal?: AbortSignal,
+): Promise<OwnedMvrApp[]> {
+  const rows = await drainPages(async ({ limit, cursor }) => {
+    const { data } = await gqlRequest<{
+      address: {
+        objects: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null }
+          nodes: OwnedMvrAppNode[]
+        }
+      } | null
+    }>(
+      network,
+      OWNED_MVR_APPS_QUERY,
+      { address: ownerId, type, first: limit, after: cursor ?? null },
+      signal,
+    )
+    return mapPage(data.address?.objects, (n): OwnedMvrApp | null => {
+      const name = mvrAppName(n.contents?.json, n.contents?.display?.output)
+      return name ? { address: n.address, name } : null
+    })
+  })
+  return rows
+    .filter((a): a is OwnedMvrApp => a != null)
+    .sort((a, b) => a.name.localeCompare(b.name) || a.address.localeCompare(b.address))
 }
 
 // The `0x2::package::Publisher` objects an owner holds. Each Publisher proves

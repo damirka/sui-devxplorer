@@ -206,6 +206,32 @@ export function formatAgeAgo(ms: number | null | undefined): string {
 }
 
 /**
+ * A span of milliseconds as `6d 23h` once it reaches a day, else the finer
+ * {@link formatAge} form (`4h 12m`, `42s`). For "starts in" / "expires in".
+ */
+export function formatSpan(ms: number): string {
+  const day = 86_400_000
+  if (ms < day) return formatAge(ms)
+  const d = Math.floor(ms / day)
+  const h = Math.floor((ms % day) / 3_600_000)
+  return `${d}d ${h}h`
+}
+
+/** An epoch-ms instant in UTC, second precision: `2026-09-14 19:39:59 UTC`. */
+export function formatUtc(ms: number): string {
+  return new Date(ms).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
+}
+
+/**
+ * An epoch-ms instant for a tooltip: the UTC wall-clock time, then how far it
+ * is from now — `2026-09-14 19:39:59 UTC · in 23h 12m` / `… · 3h ago`.
+ */
+export function describeInstant(ms: number, now = Date.now()): string {
+  const delta = ms - now
+  return `${formatUtc(ms)} · ${delta >= 0 ? `in ${formatSpan(delta)}` : formatAgo(-delta)}`
+}
+
+/**
  * A next-epoch countdown from the milliseconds remaining: `—` when unknown,
  * `~now` at/after the boundary, else a `~`-prefixed {@link formatAge} (`~4h 12m`).
  * Shared by the liveness banner, the validator summary, and the landing live

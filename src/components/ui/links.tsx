@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode } from 'react'
+import type { Network } from '@/context/network-context'
 import { Link, useSearchParams } from 'react-router-dom'
 import { CopyButton } from './CopyButton'
 import { Hash } from './Hash'
@@ -32,18 +33,23 @@ export function withSearch(
   current: URLSearchParams,
   value: string,
   version?: number | null,
+  network?: Network,
 ): URLSearchParams {
   const next = clearPins(new URLSearchParams(current))
   next.set('search', value)
   if (version != null) next.set('version', String(version))
+  // An explicit target network (an id that lives elsewhere — e.g. an MVR name's
+  // testnet package seen from mainnet) is always written, mainnet included: an
+  // absent `network` falls back to the last network picked, not to mainnet.
+  if (network) next.set('network', network)
   return next
 }
 
 /** Build a `?search=` href for the current location via {@link withSearch}. */
 export function useSearchHref() {
   const [params] = useSearchParams()
-  return (value: string, version?: number | null) =>
-    `?${withSearch(params, value, version).toString()}`
+  return (value: string, version?: number | null, network?: Network) =>
+    `?${withSearch(params, value, version, network).toString()}`
 }
 
 /** Href to the validators dashboard focused on one validator — it auto-scrolls
@@ -106,9 +112,11 @@ export function linkifyMoveText(text: string): ReactNode[] {
 
 /** A truncated, copyable identifier that links to its own page — `Hash` with a
  *  `to` set to the value's search href. */
-export function LinkedHash({ value }: { value: string }) {
+/** A linked, copyable id — into the current network, or `network` when the id
+ *  lives elsewhere. */
+export function LinkedHash({ value, network }: { value: string; network?: Network }) {
   const searchHref = useSearchHref()
-  return <Hash value={value} to={searchHref(value)} />
+  return <Hash value={value} to={searchHref(value, null, network)} />
 }
 
 /** A parsed Move type repr: a base (`pkg::mod::Name`, `vector`, or a primitive)

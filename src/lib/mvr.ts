@@ -94,17 +94,24 @@ export async function reverseResolveMvrBulk(
 ): Promise<Record<string, string>> {
   if (!mvrSupported(network) || packageIds.length === 0) return {}
 
+  const chunks = chunkBy(packageIds, BULK_LIMIT)
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      mvrPost<{ resolution: Record<string, { name: string } | null> }>(
+        network,
+        '/v1/reverse-resolution/bulk',
+        { package_ids: chunk },
+        signal,
+      ),
+    ),
+  )
   const out: Record<string, string> = {}
-  for (let start = 0; start < packageIds.length; start += BULK_LIMIT) {
-    const chunk = packageIds.slice(start, start + BULK_LIMIT)
-    const data = await mvrPost<{
-      resolution: Record<string, { name: string } | null>
-    }>(network, '/v1/reverse-resolution/bulk', { package_ids: chunk }, signal)
+  chunks.forEach((chunk, i) => {
     for (const id of chunk) {
-      const name = data?.resolution?.[id]?.name
+      const name = results[i]?.resolution?.[id]?.name
       if (name) out[id] = name
     }
-  }
+  })
   return out
 }
 
@@ -165,6 +172,45 @@ export async function resolveMvrName(
     resolution: Record<string, { package_id: string } | null>
   }>(network, '/v1/resolution/bulk', { names: [name] }, signal)
   return data?.resolution?.[name]?.package_id ?? null
+}
+
+/**
+ * Forward-resolve many names in one go → `{ name: packageId }`. A name that
+ * doesn't resolve (registered, but no package assigned yet) is simply absent —
+ * the endpoint omits it rather than failing the batch. Chunked to the API's
+ * 50-name cap; `{}` on networks without a registry.
+ */
+export async function resolveMvrNamesBulk(
+  network: Network,
+  names: string[],
+  signal?: AbortSignal,
+): Promise<Record<string, string>> {
+  if (!mvrSupported(network) || names.length === 0) return {}
+  // The chunks are independent requests (unlike cursor pages) — fire them together.
+  const chunks = await Promise.all(
+    chunkBy(names, BULK_LIMIT).map((chunk) =>
+      mvrPost<{ resolution: Record<string, { package_id: string } | null> }>(
+        network,
+        '/v1/resolution/bulk',
+        { names: chunk },
+        signal,
+      ),
+    ),
+  )
+  const out: Record<string, string> = {}
+  for (const data of chunks) {
+    for (const [name, r] of Object.entries(data?.resolution ?? {})) {
+      if (r?.package_id) out[name] = r.package_id
+    }
+  }
+  return out
+}
+
+/** Split `items` into consecutive slices of at most `size`. */
+function chunkBy<T>(items: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let start = 0; start < items.length; start += size) out.push(items.slice(start, start + size))
+  return out
 }
 
 /**

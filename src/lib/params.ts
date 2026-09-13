@@ -1,11 +1,11 @@
 /**
  * The query params that pin a *view* of an id: an object version, a validators
- * tab / focused validator / epoch view, the checkpoints feed. They travel with
- * the id they belong to — dropped when navigating to a new id (`withSearch`),
- * and part of what a bookmark captures. `search` is the id itself and `network`
- * is never a pin.
+ * tab / focused validator / epoch view, the checkpoints feed, the owned-objects
+ * filter (`owned`) and its status facet. They travel with the id they belong
+ * to — dropped when navigating to a new id (`withSearch`), and part of what a
+ * bookmark captures. `search` is the id itself and `network` is never a pin.
  */
-export const PIN_PARAMS = ['version', 'vtab', 'validator', 'view', 'feed'] as const
+export const PIN_PARAMS = ['version', 'vtab', 'validator', 'view', 'feed', 'owned', 'facet'] as const
 
 export type PinParam = (typeof PIN_PARAMS)[number]
 

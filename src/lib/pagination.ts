@@ -29,6 +29,27 @@ export function emptyPage<T>(): Page<T> {
   return { items: [], hasNextPage: false, endCursor: null }
 }
 
+/**
+ * Walk a paged fetcher to the end and return every item — for the views that
+ * hold a bounded-per-owner set in memory (SuiNS names, allowances, upgrade
+ * caps, …) so they can sort and facet over the whole thing. Pages are fetched
+ * sequentially: each cursor comes from the page before it.
+ */
+export async function drainPages<T>(
+  fetchPage: (args: PageArgs) => Promise<Page<T>>,
+  limit = 50,
+): Promise<T[]> {
+  const out: T[] = []
+  let cursor: string | null = null
+  for (;;) {
+    const page: Page<T> = await fetchPage({ limit, cursor })
+    out.push(...page.items)
+    if (!page.hasNextPage) break
+    cursor = page.endCursor
+  }
+  return out
+}
+
 /** Minimal forward-connection shape (`first`/`after`). */
 interface ForwardConnection<N> {
   pageInfo: { hasNextPage: boolean; endCursor: string | null }

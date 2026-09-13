@@ -1,14 +1,8 @@
-import { useState } from 'react'
-import { Panel, PanelSection } from '@/components/ui/Panel'
-import { Pager, usePagedList } from '@/components/ui/Pager'
-import { DataList } from '@/components/ui/DataList'
-import { CollapseToggle } from '@/components/ui/CollapseToggle'
 import { LinkedHash, EntityLink } from '@/components/ui/links'
 import { Muted } from '@/components/ui/Field'
-import { useNetwork } from '@/context/useNetwork'
 import type { Network } from '@/context/network-context'
 import { useAsync } from '@/lib/useAsync'
-import { fetchOwnedUpgradeCaps, type OwnedUpgradeCapNode } from '@/lib/object'
+import type { OwnedUpgradeCapNode } from '@/lib/object'
 import { upgradeCapData, policyLabel, type UpgradeCapData } from '@/lib/upgradeCap'
 import { reverseResolveMvrBulk } from '@/lib/mvr'
 import { MenuRow } from '@/components/ui/MenuRow'
@@ -50,7 +44,7 @@ export function useUpgradeCapPackageNames(
 /**
  * One cap-list row: the cap object id → the package it governs (named with its
  * MVR name when one is registered) → the upgrade policy and package version.
- * Shared by the "UpgradeCaps held" panel and the owned-objects list.
+ * Rendered by the owned-objects UPGRADE CAPS view.
  */
 export function UpgradeCapRow({
   row,
@@ -86,77 +80,5 @@ export function UpgradeCapRow({
       </span>
       {meta && <span className="text-muted shrink-0">{meta}</span>}
     </MenuRow>
-  )
-}
-
-/**
- * The `0x2::package::UpgradeCap` objects an owner holds — the upgrade authority
- * an address has over packages. Each row links to the cap object (whose page
- * decodes it in full) and to the package it governs. Cursor-paginated. With
- * `hideWhenEmpty`, renders nothing once the fetch resolves with no caps held.
- */
-export function OwnedUpgradeCaps({
-  id,
-  hideWhenEmpty = false,
-}: {
-  id: string
-  hideWhenEmpty?: boolean
-}) {
-  const { network } = useNetwork()
-  const { items, loading, error, paged, pagerProps } = usePagedList(
-    `${network}|${id}`,
-    (args, signal) => fetchOwnedUpgradeCaps(network, id, args, signal),
-  )
-
-  const rows = toCapRows(items)
-  const mvrNames = useUpgradeCapPackageNames(network, rows)
-
-  const [open, setOpen] = useState(true)
-
-  if (hideWhenEmpty && !loading && !error && rows.length === 0) {
-    return null
-  }
-
-  return (
-    <Panel>
-      <PanelSection
-        label={
-          <CollapseToggle
-            open={open}
-            onToggle={() => setOpen((v) => !v)}
-            label="UpgradeCaps held"
-          />
-        }
-        action={
-          // Pager only when expanded; the count stays visible either way so a
-          // collapsed panel still tells you how many caps are held.
-          open && paged ? (
-            <Pager {...pagerProps} label="upgrade caps" />
-          ) : rows.length > 0 ? (
-            <span className="text-muted font-mono text-xs">{rows.length}</span>
-          ) : undefined
-        }
-      >
-        {open && (
-          <DataList
-            loading={loading}
-            error={error}
-            items={rows}
-            empty={<Muted>no UpgradeCaps held.</Muted>}
-            skeleton={3}
-            scroll
-          >
-            {(r, i) => (
-              <UpgradeCapRow
-                key={r.id}
-                row={r}
-                mvrName={r.package ? mvrNames[r.package] : undefined}
-                n={pagerProps.pageIndex * pagerProps.pageSize + i + 1}
-              />
-            )}
-          </DataList>
-        )}
-      </PanelSection>
-    </Panel>
   )
 }

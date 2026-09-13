@@ -2,12 +2,16 @@ import { useState, type ReactNode } from 'react'
 import { CopyButton } from './CopyButton'
 import { linkifyAddresses } from './JsonBlock'
 import { cn } from '@/lib/cn'
+import { describeInstant } from '@/lib/format'
 
 /**
  * A collapsible JSON tree viewer for Move object contents. Objects and arrays
  * fold/unfold per node; primitive values render inline with any on-chain
- * id/address linkified. The body scrolls (so a huge object doesn't run off the
- * page) and `expand all` / `collapse all` reset every node at once.
+ * id/address linkified, and any field whose name contains `timestamp_ms` (the
+ * Move convention for an epoch-ms instant — `Clock.timestamp_ms`,
+ * `expiration_timestamp_ms`, …) highlighted with the UTC time in its tooltip. The body scrolls (so a huge
+ * object doesn't run off the page) and `expand all` / `collapse all` reset
+ * every node at once.
  *
  * For the flat, copy-friendly string form, use `JsonBlock` instead.
  */
@@ -115,7 +119,7 @@ function Node({
         ) : arr ? (
           <Punct>{'[]'}</Punct>
         ) : (
-          <Value value={value} />
+          <Value k={k} value={value} />
         )}
       </Row>
     )
@@ -193,9 +197,45 @@ function Punct({ children }: { children: ReactNode }) {
   return <span className="text-muted/60">{children}</span>
 }
 
-/** A primitive value: strings quoted with ids linkified, the rest plain. */
-function Value({ value }: { value: unknown }) {
+/** Does a field name follow the Move `…timestamp_ms` convention for an epoch-ms
+ *  instant? (`timestamp_ms`, `start_timestamp_ms`, `expiration_timestamp_ms`, …) */
+function isTimestampMsKey(k: string | null): boolean {
+  return k != null && /timestamp_ms/i.test(k)
+}
+
+// Only decorate values that read as a real instant: between 2000 and 2200. A
+// `0`, a `null`-ish sentinel, or a u64 max would otherwise get a nonsense date.
+const MIN_PLAUSIBLE_MS = Date.UTC(2000, 0, 1)
+const MAX_PLAUSIBLE_MS = Date.UTC(2200, 0, 1)
+
+/** The epoch-ms a `timestamp_ms` leaf holds (u64s arrive as strings, smaller
+ *  ints as numbers), or null when it isn't a plausible instant. */
+function timestampMs(value: unknown): number | null {
+  const n =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && /^\d+$/.test(value)
+        ? Number(value)
+        : NaN
+  return Number.isFinite(n) && n >= MIN_PLAUSIBLE_MS && n < MAX_PLAUSIBLE_MS ? n : null
+}
+
+/** A primitive value: strings quoted with ids linkified, the rest plain. A
+ *  `timestamp_ms` field's value is green with the decoded UTC time on hover. */
+function Value({ k, value }: { k: string | null; value: unknown }) {
   if (value === null) return <span className="text-muted/60">null</span>
+  const ms = isTimestampMsKey(k) ? timestampMs(value) : null
+  if (ms != null) {
+    const quoted = typeof value === 'string'
+    return (
+      <span
+        className="text-primary cursor-help underline decoration-dotted underline-offset-2"
+        title={describeInstant(ms)}
+      >
+        {quoted ? `"${value}"` : String(value)}
+      </span>
+    )
+  }
   if (typeof value === 'string') {
     return (
       <span className="text-text break-all whitespace-pre-wrap">

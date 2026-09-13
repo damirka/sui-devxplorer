@@ -40,7 +40,6 @@ import { fetchSignerScheme, fetchObjectRemovalTx } from '@/lib/transaction'
 import { MvrChip } from './MvrChip'
 import { UpgradeCapPanel, upgradeCapData } from './UpgradeCapPanel'
 import { WrappedBody, WrapperPanel } from './WrappedView'
-import { OwnedUpgradeCaps } from './OwnedUpgradeCaps'
 import { Balances } from './Balances'
 import { DisplayModal } from './DisplayModal'
 import {
@@ -50,6 +49,9 @@ import {
   SUINS_REGISTRATION_MVR,
 } from '@/lib/suins'
 import { isStakedSuiType } from '@/lib/staking'
+import { isAllowanceCapType, parseAllowance, type AllowanceData } from '@/lib/allowance'
+import { AllowanceStatusBadge } from './AllowanceBadge'
+import { AllowancePanel } from './AllowancePanel'
 import { resolveMvrType } from '@/lib/mvr'
 import { isEditableTarget, isModalOpen, useKeydown } from '@/lib/hotkeys'
 import {
@@ -300,6 +302,14 @@ export function ObjectView({
   const snapObj = snapshot.data?.object ?? null
   const snapType = snapObj?.asMoveObject?.contents?.type.repr ?? null
   const snapContents = snapObj?.asMoveObject?.contents?.json
+  // A native allowance (`0x2::allowance`) — the live object, or a revoked one's
+  // last-known snapshot — tagged in the header with its status (or `revoked`).
+  // Null for anything else.
+  const allowance =
+    (objType ? parseAllowance(objType, obj?.asMoveObject?.contents?.json ?? null) : null) ??
+    (snapType ? parseAllowance(snapType, snapContents ?? null) : null)
+  // The type to badge as an allowance cap — live, or the snapshot of a revoked one.
+  const isAllowanceCap = isAllowanceCapType(objType ?? snapType)
   // Creating tx (first version) for the deleted object's overview lineage — comes
   // free from the same bounds probe.
   const deletedCreatedTx = bounds.data?.createdTx ?? null
@@ -313,6 +323,21 @@ export function ObjectView({
     [network, value, isDeletedObject],
   )
 
+  // How a gone object is worded in the header. An allowance's status badge
+  // says `revoked` itself; anything else reads wrapped or deleted per the
+  // removal probe.
+  const goneTag =
+    !isDeletedObject || allowance
+      ? null
+      : removal.data && !removal.data.deleted
+        ? {
+            label: 'wrapped',
+            title: 'no longer a standalone object — wrapped inside another object',
+          }
+        : {
+            label: 'deleted',
+            title: 'no longer in the live object set — deleted, or wrapped inside another object',
+          }
   // An address carries no on-chain marker for how it signs — the only signal is
   // a transaction it authored. Probe for it once we know this id is an address,
   // so we can badge the scheme (Ed25519 / multisig / zkLogin / passkey / …) and
@@ -371,28 +396,22 @@ export function ObjectView({
           <>
             {frameworkTag && <Badge>{frameworkTag}</Badge>}
             {systemHint && <Badge>{systemHint.tag}</Badge>}
-            {isDeletedObject &&
-              (removal.data && !removal.data.deleted ? (
-                <Badge
-                  tone="danger"
-                  title="no longer a standalone object — wrapped inside another object"
-                >
-                  wrapped
-                </Badge>
-              ) : (
-                <Badge
-                  tone="danger"
-                  title="no longer in the live object set — deleted, or wrapped inside another object"
-                >
-                  deleted
-                </Badge>
-              ))}
+            {goneTag && (
+              <Badge tone="danger" title={goneTag.title}>
+                {goneTag.label}
+              </Badge>
+            )}
             {isWrappedUid && (
               <Badge title="a UID embedded inside another object — created already wrapped, never a standalone object">
                 wrapped
               </Badge>
             )}
             {isStakedSuiType(objType) && <Badge>staked sui</Badge>}
+            {allowance && <Badge>allowance</Badge>}
+            {allowance && <AllowanceStatusBadge allowance={allowance} revoked={isDeletedObject} />}
+            {isAllowanceCap && (
+              <Badge title="the funder's revocation handle for an allowance">allowance cap</Badge>
+            )}
             {suins && <Badge kind="suins">suins</Badge>}
             {bridgePaused != null && (
               <Badge
@@ -508,6 +527,7 @@ export function ObjectView({
                   </PanelSection>
                 </Panel>
               )}
+              {allowance && <AllowancePanel allowance={allowance} revoked />}
             </div>
           ) : snapshot.loading ? (
             <Panel>
@@ -542,7 +562,6 @@ export function ObjectView({
               still be a parent holding dynamic fields (e.g. a table/bag) — those
               are the important content, so surface them when present. */}
           <DynamicFields id={value} hideWhenEmpty />
-          <OwnedUpgradeCaps id={value} hideWhenEmpty />
           <OwnedObjects id={value} />
           {/* Sent = txs this address signed; affected = any tx that involved it
               (sender OR input/output recipient — transfers in, payouts, etc.). */}
@@ -564,6 +583,7 @@ export function ObjectView({
         ) : (
           <MoveObjectBody
             data={obj}
+            allowance={allowance}
             displayError={data?.displayError ?? null}
             onViewDisplay={() => setDisplayOpen(true)}
           />
@@ -588,10 +608,13 @@ export function ObjectView({
 
 function MoveObjectBody({
   data,
+  allowance,
   displayError,
   onViewDisplay,
 }: {
   data: SuiObject
+  /** The object decoded as a native allowance (by `ObjectView`), or null. */
+  allowance: AllowanceData | null
   displayError: string | null
   /** Open the rendered-display modal (owned by `ObjectView`). */
   onViewDisplay: () => void
@@ -806,8 +829,14 @@ function MoveObjectBody({
 
         {/* Dynamic fields resolve to the live object only — hide on a snapshot.
             When the object wraps its state in a `Versioned` and has no dynamic
-            fields of its own, the panel surfaces that inner value instead. */}
-        {live && <DynamicFields id={data.address} versioned={versioned} />}
+            fields of its own, the panel surfaces that inner value instead. An
+            allowance never has dynamic fields, so its decoded view sits here. */}
+        {live &&
+          (allowance ? (
+            <AllowancePanel allowance={allowance} />
+          ) : (
+            <DynamicFields id={data.address} versioned={versioned} />
+          ))}
       </div>
 
       {/* Display renders from THIS node's contents (the resolver applies the

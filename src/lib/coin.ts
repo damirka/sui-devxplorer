@@ -7,6 +7,8 @@
  * `coinMetadata` supplies decimals + symbol for human-readable formatting.
  */
 import { gqlRequest } from './graphql'
+import { useAsync } from './useAsync'
+import { formatTokenAmount } from './format'
 import { mapPage, type Page, type PageArgs } from './pagination'
 import type { Network } from '@/context/network-context'
 
@@ -255,3 +257,36 @@ export async function fetchCoinObjectBalances(
   }
   return out
 }
+
+/**
+ * A raw integer amount scaled by a coin's metadata (`decimals`, suffixed with
+ * its `symbol`); without metadata the grouped raw integer (decimals 0) — the
+ * one fallback every amount in the app shares.
+ */
+export function formatCoinAmount(
+  raw: string | number | bigint,
+  meta: CoinMeta | undefined,
+): string {
+  return meta ? formatTokenAmount(raw, meta.decimals, meta.symbol) : formatTokenAmount(raw, 0)
+}
+
+/**
+ * Coin metadata for a set of coin types, keyed by type — for views whose
+ * amounts arrive as raw integers. Refetches only when the set of types changes
+ * (cache hits cost nothing, see {@link fetchCoinMetadata}); empty until loaded.
+ */
+export function useCoinMetas(
+  network: Network,
+  types: (string | null | undefined)[],
+): Map<string, CoinMeta> {
+  const key = [...new Set(types.filter((t): t is string => !!t))].sort().join(',')
+  const { data } = useAsync(
+    (signal) =>
+      key
+        ? fetchCoinMetadata(network, key.split(','), signal)
+        : Promise.resolve(new Map<string, CoinMeta>()),
+    [network, key],
+  )
+  return data ?? EMPTY_METAS
+}
+const EMPTY_METAS = new Map<string, CoinMeta>()

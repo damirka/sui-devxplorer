@@ -7,6 +7,7 @@
  * everything this page shows; the rest of this module just shapes that blob.
  */
 import { gqlRequest } from './graphql'
+import { numOrNull } from './moveJson'
 import { readEpochCache, writeEpochCache } from './epochCache'
 import type { Network } from '@/context/network-context'
 
@@ -209,14 +210,6 @@ function big(v: unknown): bigint {
 function num(v: unknown): number {
   const n = typeof v === 'string' ? Number(v) : typeof v === 'number' ? v : NaN
   return Number.isFinite(n) ? n : 0
-}
-
-/** A numeric field → `number`, preserving `null`/absent as `null` (so a genuine
- *  `0` — e.g. an epoch-0 activation — isn't confused with "unset"). */
-function numOrNull(v: unknown): number | null {
-  if (v == null) return null
-  const n = typeof v === 'string' ? Number(v) : typeof v === 'number' ? v : NaN
-  return Number.isFinite(n) ? n : null
 }
 
 /** A string field, trimmed → `string`, or `null` when empty/absent. */
