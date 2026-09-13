@@ -511,7 +511,7 @@ function WithdrawSourceText({ source }: { source: WithdrawSource }) {
         <span className="text-muted flex flex-wrap items-center gap-1.5">
           via allowance <LinkedHash value={source.allowance} />
           <span>·</span>
-          funder <LinkedHash value={source.funder} />
+          funder <AddressLink value={source.funder} />
         </span>
       )
   }

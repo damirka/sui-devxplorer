@@ -32,6 +32,7 @@ import { Badge } from '@/components/ui/Badge'
 import { TabButton } from '@/components/ui/TabButton'
 import { CoinIcon } from '@/components/ui/CoinIcon'
 import { EntityLink, LinkedHash, TypeLink, useValidatorHref } from '@/components/ui/links'
+import { AddressLink } from '@/components/ui/AddressLink'
 import { MenuRow } from '@/components/ui/MenuRow'
 import { useNetwork } from '@/context/useNetwork'
 import type { Network } from '@/context/network-context'
@@ -842,7 +843,6 @@ function StakedView({ network, id }: { network: Network; id: string }) {
         return (
           <MenuRow key={s.address} n={i + 1} wrap>
             <LinkedHash value={s.address} />
-            <Badge className="shrink-0">staked sui</Badge>
             {status !== 'active' && (
               <Badge
                 tone={status === 'activating' ? 'muted' : 'danger'}
@@ -861,7 +861,22 @@ function StakedView({ network, id }: { network: Network; id: string }) {
               poolId={s.poolId}
               href={validatorHref}
             />
-            <span className="text-text ml-auto shrink-0 tabular-nums" title="principal staked">
+            {/* Fixed-width, right-aligned epoch and principal columns so the
+                numbers line up down the list. */}
+            <span
+              className="text-muted ml-auto w-[6.5rem] shrink-0 text-right tabular-nums"
+              title={
+                status === 'activating'
+                  ? 'the epoch this stake starts earning in'
+                  : 'the epoch this stake started earning in'
+              }
+            >
+              {s.activationEpoch != null ? `epoch ${formatNumber(s.activationEpoch)}` : ''}
+            </span>
+            <span
+              className="text-text min-w-[10.5rem] shrink-0 text-right tabular-nums"
+              title="principal staked"
+            >
               {formatSui(s.principal)}
             </span>
           </MenuRow>
@@ -1005,7 +1020,7 @@ function AllowanceRow({
           className="text-muted inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap"
           title="spender"
         >
-          for <LinkedHash value={a.spender} />
+          for <AddressLink value={a.spender} />
         </span>
       )}
       <span

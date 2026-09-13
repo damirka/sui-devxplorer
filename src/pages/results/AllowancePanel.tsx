@@ -67,7 +67,7 @@ export function AllowancePanel({
               <Muted>—</Muted>
             )}
           </Field>
-          <Field label="Coin">
+          <Field label="Currency">
             {a.coinType ? (
               <span className="flex flex-wrap items-center gap-2">
                 <CoinIcon url={meta?.iconUrl} symbol={meta?.symbol} className="h-4 w-4" />
