@@ -10,6 +10,9 @@ export function Hero() {
     <div className="flex flex-1 flex-col">
       <div className="flex flex-1 items-center justify-center pb-16">
         <div className="w-full max-w-2xl px-2">
+          {/* The page's only heading — visually the search is the page, but
+              crawlers and screen readers get a real h1 to anchor on. */}
+          <h1 className="sr-only">DevXplorer — Sui explorer for developers</h1>
           <SearchBar variant="hero" autoFocus hints />
         </div>
       </div>

@@ -2,13 +2,83 @@
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>DevXplorer — Sui explorer for developers</title>
     <meta
       name="description"
-      content="DevXplorer — a developer-focused Sui network explorer. Search addresses, objects, transactions and packages."
+      content="A developer-first Sui blockchain explorer. Paste any address, object id, transaction digest, package, SuiNS or MVR name and get a deep-linkable view — Move types, object history, package modules, Walrus blobs. Mainnet, testnet, devnet. No backend."
     />
-    <title>sui dev explorer</title>
+    <link rel="canonical" href="https://devxplorer.io/" />
+    <meta name="robots" content="index, follow" />
+    <meta name="application-name" content="DevXplorer" />
+    <meta name="theme-color" content="#020604" />
+    <meta name="color-scheme" content="dark light" />
+
+    <!-- Icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="DevXplorer" />
+    <meta property="og:url" content="https://devxplorer.io/" />
+    <meta property="og:title" content="DevXplorer — Sui explorer for developers" />
+    <meta
+      property="og:description"
+      content="Paste any Sui address, object, transaction, package or name. Move types, object history, package modules, Walrus blobs — mainnet, testnet, devnet."
+    />
+    <meta property="og:image" content="https://devxplorer.io/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="DevXplorer — Sui explorer for developers" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="DevXplorer — Sui explorer for developers" />
+    <meta
+      name="twitter:description"
+      content="Paste any Sui address, object, transaction, package or name. Move types, object history, package modules, Walrus blobs — mainnet, testnet, devnet."
+    />
+    <meta name="twitter:image" content="https://devxplorer.io/og.png" />
+
+    <!-- Structured data -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://devxplorer.io/#website",
+            "url": "https://devxplorer.io/",
+            "name": "DevXplorer",
+            "description": "A developer-first Sui blockchain explorer.",
+            "potentialAction": {
+              "@type": "SearchAction",
+              "target": {
+                "@type": "EntryPoint",
+                "urlTemplate": "https://devxplorer.io/?search={search_term_string}&network=mainnet"
+              },
+              "query-input": "required name=search_term_string"
+            }
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "https://devxplorer.io/#app",
+            "name": "DevXplorer",
+            "url": "https://devxplorer.io/",
+            "applicationCategory": "DeveloperApplication",
+            "operatingSystem": "Any",
+            "browserRequirements": "Requires JavaScript",
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "description": "Search-first Sui network explorer for developers: addresses, objects, transactions, Move packages, SuiNS and MVR names, Walrus blobs.",
+            "keywords": "Sui, Sui explorer, blockchain explorer, Move, Sui GraphQL, SuiNS, MVR, Walrus"
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
