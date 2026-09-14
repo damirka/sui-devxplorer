@@ -15,6 +15,7 @@ import { OwnedObjects } from './OwnedObjects'
 import { Txs } from './Txs'
 import { MvrPanel } from './MvrPanel'
 import { PackageUpgradeCap } from './PackageUpgradeCap'
+import { PackageVersions } from './PackageVersions'
 import { Balances } from './Balances'
 import { PackageDependencies } from './PackageDependencies'
 import { PackageDependents } from './PackageDependents'
@@ -48,6 +49,8 @@ export function PackageBody({
       <ObjectOverview data={data} isPackage />
 
       <PackageUpgradeCap packageId={data.address} />
+
+      <PackageVersions packageId={data.address} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
         <PackageDependencies packageId={data.address} />

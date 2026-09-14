@@ -38,18 +38,20 @@ export function withSearch(
   const next = clearPins(new URLSearchParams(current))
   next.set('search', value)
   if (version != null) next.set('version', String(version))
-  // An explicit target network (an id that lives elsewhere — e.g. an MVR name's
-  // testnet package seen from mainnet) is always written, mainnet included: an
-  // absent `network` falls back to the last network picked, not to mainnet.
+  // Every result URL names its network (mainnet included — see
+  // `NetworkProvider`). Callers pass the active one, or an explicit target for
+  // an id that lives elsewhere (an MVR name's testnet package seen from mainnet).
   if (network) next.set('network', network)
   return next
 }
 
-/** Build a `?search=` href for the current location via {@link withSearch}. */
+/** Build a `?search=` href for the current location via {@link withSearch} —
+ *  on the active network unless `network` targets another. */
 export function useSearchHref() {
   const [params] = useSearchParams()
+  const { network: active } = useNetwork()
   return (value: string, version?: number | null, network?: Network) =>
-    `?${withSearch(params, value, version, network).toString()}`
+    `?${withSearch(params, value, version, network ?? active).toString()}`
 }
 
 /** Href to the validators dashboard focused on one validator — it auto-scrolls

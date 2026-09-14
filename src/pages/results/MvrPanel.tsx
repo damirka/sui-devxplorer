@@ -1,26 +1,18 @@
-import { useState } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { Panel, PanelSection } from '@/components/ui/Panel'
 import { Badge } from '@/components/ui/Badge'
 import { CopyButton } from '@/components/ui/CopyButton'
-import { EntityLink, LinkedHash } from '@/components/ui/links'
+import { EntityLink } from '@/components/ui/links'
 import { useNetwork } from '@/context/useNetwork'
 import { useAsync } from '@/lib/useAsync'
-import {
-  fetchMvrForPackage,
-  mvrAppUrl,
-  type MvrPackageInfo,
-  type MvrVersion,
-} from '@/lib/mvr'
-import { normalizeSuiId } from '@/lib/search'
-import { cn } from '@/lib/cn'
-import { MenuRow } from '@/components/ui/MenuRow'
+import { fetchMvrForPackage, mvrAppUrl, type MvrPackageInfo } from '@/lib/mvr'
 
 /**
  * The Move Registry identity of a package: the `@namespace/app` name assigned
- * to it, its registry metadata (description + links), and the full list of
- * published versions — each linking to that version's package page. All sourced
- * from the MVR REST API, not GraphQL.
+ * to it and its registry metadata (description + links), from the MVR REST
+ * API, not GraphQL. The version chain is NOT repeated here — the registry's
+ * `@name/N` versions are the package's on-chain upgrade chain, which the
+ * generic `PackageVersions` panel below already lists.
  *
  * Renders nothing for packages with no MVR name (or on networks without a
  * registry), so it can sit unconditionally at the top of the package body.
@@ -43,19 +35,12 @@ export function MvrPanel({
   )
 
   if (!data) return null
-  return <MvrContent packageId={packageId} info={data} />
+  return <MvrContent info={data} />
 }
 
-function MvrContent({
-  packageId,
-  info,
-}: {
-  packageId: string
-  info: MvrPackageInfo
-}) {
-  const { name, record, versions } = info
+function MvrContent({ info }: { info: MvrPackageInfo }) {
+  const { name, record } = info
   const { iconUrl, description, homepageUrl, documentationUrl } = record.metadata
-  const viewing = normalizeSuiId(packageId.replace(/^0x/i, '')).toLowerCase()
 
   return (
     <Panel>
@@ -105,78 +90,7 @@ function MvrContent({
           </div>
         </div>
       </PanelSection>
-
-      {versions.length > 0 && (
-        <VersionsList
-          versions={versions}
-          latest={record.version}
-          viewing={viewing}
-        />
-      )}
     </Panel>
-  )
-}
-
-const COLLAPSE_AT = 5
-
-/** The published versions, collapsed to the first few with a toggle (and a
- * scroll cap when expanded) — a long chain (deepbook/core has ~19) shouldn't
- * dominate the panel. */
-function VersionsList({
-  versions,
-  latest,
-  viewing,
-}: {
-  versions: MvrVersion[]
-  latest: number
-  viewing: string
-}) {
-  const [expanded, setExpanded] = useState(false)
-  // Latest first — the natural order, and it keeps the most recent versions
-  // visible when the list is collapsed.
-  const ordered = [...versions].sort((a, b) => b.version - a.version)
-  const collapsible = ordered.length > COLLAPSE_AT
-  const shown = collapsible && !expanded ? ordered.slice(0, COLLAPSE_AT) : ordered
-
-  return (
-    <PanelSection
-      label="Versions"
-      action={
-        <span className="text-muted font-mono text-xs">
-          {versions.length} published
-        </span>
-      }
-    >
-      <ul
-        className={cn(
-          'divide-line divide-y font-mono text-xs',
-          expanded && 'max-h-[22rem] overflow-y-auto',
-        )}
-      >
-        {shown.map((v) => {
-          const isViewing = v.packageId.toLowerCase() === viewing
-          const isLatest = v.version === latest
-          return (
-            <MenuRow key={v.version} n={v.version}>
-              <LinkedHash value={v.packageId} />
-              {isViewing && <span className="text-primary">· viewing</span>}
-              {isLatest && !isViewing && (
-                <span className="text-muted">· latest</span>
-              )}
-            </MenuRow>
-          )
-        })}
-      </ul>
-      {collapsible && (
-        <button
-          type="button"
-          onClick={() => setExpanded((e) => !e)}
-          className="text-muted hover:text-primary mt-2.5 font-mono text-xs transition-colors"
-        >
-          {expanded ? '− show fewer' : `+ show all ${versions.length} versions`}
-        </button>
-      )}
-    </PanelSection>
   )
 }
 

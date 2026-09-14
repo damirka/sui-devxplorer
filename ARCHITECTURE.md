@@ -15,7 +15,9 @@ There is effectively one route, `/` (`src/App.tsx`). What renders is decided by
 query params, not by the path:
 
 - `?search=<value>` — the thing being viewed. Absent → landing prompt.
-- `?network=<mainnet|testnet|devnet|localnet>` — omitted when `mainnet`.
+- `?network=<mainnet|testnet|devnet|custom>` — always present on a result page
+  (mainnet included, so a copied link is unambiguous); absent on the landing
+  page. `NetworkProvider` normalises a URL that breaks the rule.
 - Dashboard sub-state rides along too: `?feed=txs` flips the live checkpoints
   view (`search=checkpoints`) to its programmable-transactions feed; the
   validators view keeps its tab / opened row in `vtab`, `validator`, `view`;
@@ -27,6 +29,11 @@ query params, not by the path:
 `src/pages/Home.tsx` reads `?search`; empty → `Hero`, otherwise → `ResultRouter`.
 `src/lib/search.ts#detectSearchKind()` classifies the raw string (address /
 object / transaction / package / unknown) and `ResultRouter` picks the view.
+Keywords resolve there too: framework objects (`clock`, `random`, …), framework
+types (`sui` → `0x2::sui::SUI`), dashboards, and per-network aliases
+(`lib/aliases.ts`: `usdc` → the network's native USDC type, `walrus-system`,
+`wal`, … — the keyword stays in the URL and `AliasView` resolves it against
+the active network, so a bookmark follows the network switch).
 **Any state worth sharing goes in the URL** via `useSearchParams` — never local
 component state that a reload would lose. This is what makes every view a
 shareable link and keeps the back button working.
@@ -198,6 +205,49 @@ Two ways the name gets there (`lib/suins.ts`):
   per-tick micro-batching (one aliased `address(...)` request for every address
   asked for in the same tick, ≤ 50 each). Inline results are primed into the
   same cache (`primeSuinsNames`), so the two paths never double-fetch.
+
+## Walrus: a self-contained module (`src/walrus/`)
+
+Walrus (blob storage on Sui) has no name service to ask — it isn't in SuiNS and
+its ids differ per network — so `src/walrus/registry.ts` *is* the resolution
+table, holding only what can't be fetched: the package's *original* id (every
+Walrus type is tagged with it), the System / Staking / upgrade manager /
+subsidies shared objects, the testnet WAL exchanges, each with a header tag
+and search keywords (`walrus-system`, `walrus-staking`, `wal` → the WAL
+package, `walrus-package` → the original id, `walrus-upgrade-manager`,
+`walrus-subsidies`, `wal-exchange`). The package's later versions are *not*
+listed: `walrus` opens the latest by walking the on-chain upgrade chain
+(`fetchPackageVersions`, memoised), and any version of the chain gets the
+`walrus package` tag the same way (`useWalrusPackage`). The package's callout
+links the protocol objects; the chain itself is the generic "Versions" panel
+every upgraded package gets (`PackageVersions`; hidden for in-place system
+packages). Retired deployments (the first testnet, wiped April 2025) are
+listed too so their leftover objects are tagged as dead, never dated.
+
+Everything Walrus-specific lives in that directory (`types.ts` predicates +
+decoders, `epochs.ts` the epoch clock, `blobs.ts` the owned-blobs page query,
+`components/`), and the rest of the app touches it at exactly three seams,
+each marked `// walrus:` — `lib/aliases.ts` (`walrusAliases()` spread into the
+alias table, so the keywords ride the generic `alias` search kind),
+`ObjectView` (`WalrusTags` + `WalrusNote` in the header), and `OwnedObjects`
+(the "walrus blobs" view). Add a Walrus feature inside `src/walrus`; add a seam
+only when a new host surface is needed.
+
+Two facts the module encodes that aren't obvious from the contracts:
+
+- **Blob IDs** are the on-chain `blob_id: u256` as 32 *little-endian* bytes,
+  base64url, no padding (`encodeBlobId`) — the notation the CLI, aggregators
+  and explorers use. Verified against a public aggregator; big-endian 404s.
+- **Walrus epochs are not Sui epochs** (2 weeks on mainnet, 1 day on testnet).
+  A blob's `end_epoch` is dated by projecting from the Staking inner state's
+  current epoch, its `epoch_state` timestamp (when the current epoch's change
+  completed) and `epoch_duration` — `fetchWalrusState` (memoised per network,
+  deliberately not tied to any caller's AbortSignal) + `walrusEpochStartMs`.
+  It's an estimate (the change also needs a transaction), so every date wears
+  a `~`. Components read the clock through `useWalrusState`. The owned-blobs
+  view facets by status (active / uncertified / expired), so it loads blobs
+  into memory — **capped at 500 with a load-all** (`useOwnedWalrusBlobs`),
+  since a publisher holds tens of thousands.
 
 ## Transaction bytes: the SDK schema must track the network
 

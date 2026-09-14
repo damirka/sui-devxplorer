@@ -259,3 +259,22 @@ export function formatTimestamp(iso: string | null | undefined): string {
     timeZoneName: 'short',
   })
 }
+
+/**
+ * A byte count in binary units: `512 B`, `117.3 MiB`, `2.0 PiB`. One decimal
+ * from KiB up; `bigint` accepted since on-chain sizes arrive as u64 strings.
+ */
+export function formatBytes(bytes: number | bigint | null | undefined): string {
+  if (bytes == null) return '—'
+  const n = Number(bytes)
+  if (!Number.isFinite(n)) return String(bytes)
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
+  let v = Math.abs(n)
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  const s = i === 0 ? String(Math.round(v)) : v.toFixed(1)
+  return `${n < 0 ? '-' : ''}${s} ${units[i]}`
+}

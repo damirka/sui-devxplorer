@@ -1380,8 +1380,11 @@ query PublishObjectChanges($digest: String!, $after: String) {
 }
 `
 
+// The cap's live state — plus, for a cap that's no longer live, its last
+// stored state and the package's latest version, which together can prove it
+// was wrapped rather than burned (see `PackageUpgradeCap.wrappedProof`).
 const UPGRADE_CAP_STATE_QUERY = `
-query UpgradeCapState($address: SuiAddress!) {
+query UpgradeCapState($address: SuiAddress!, $package: SuiAddress!) {
   object(address: $address) {
     owner {
       __typename
@@ -1391,6 +1394,13 @@ query UpgradeCapState($address: SuiAddress!) {
       ... on Shared { initialSharedVersion }
     }
     asMoveObject { contents { type { repr } json } }
+  }
+  lastStored: objectVersions(address: $address, last: 1) {
+    nodes { asMoveObject { contents { type { repr } json } } }
+  }
+  package(address: $package) {
+    version
+    packageVersionsAfter(last: 1) { nodes { version } }
   }
 }
 `
@@ -1442,7 +1452,8 @@ async function fetchPublishCaps(
 export interface PackageUpgradeCap {
   /** The UpgradeCap object id — stable across the package's whole upgrade chain. */
   capId: string
-  /** False when the cap has been destroyed → the package is now immutable. */
+  /** False when the cap is no longer a live object — burned (the package is
+   *  immutable for good) or wrapped inside a governing object. */
   exists: boolean
   /** The cap's current owner (when it still exists). */
   owner: ObjectOwner | null
@@ -1450,6 +1461,15 @@ export interface PackageUpgradeCap {
   version: string | null
   /** The current upgrade-policy byte. */
   policy: number | null
+  /**
+   * For a gone cap: proof that it's wrapped, not burned. Every upgrade needs
+   * the cap, and a cap used while live gets a new stored version — so a package
+   * upgraded past the version recorded in the cap's *last stored* state was
+   * upgraded from inside a wrapper. `{ from, to }` is that evidence (the cap's
+   * recorded version → the package's latest); null when there's no such
+   * upgrade, which leaves burned-vs-wrapped open.
+   */
+  wrappedProof: { from: number; to: number } | null
 }
 
 /**
@@ -1509,17 +1529,23 @@ export async function fetchPackageUpgradeCap(
 
   // 3. The cap's *current* state — owner (it's often transferred away from the
   //    publisher) and version/policy, or non-existence if it was burned.
+  type MoveContents = { contents: { type: { repr: string }; json: unknown } | null } | null
   const { data: state } = await gqlRequest<{
-    object: {
-      owner: ObjectOwner | null
-      asMoveObject: {
-        contents: { type: { repr: string }; json: unknown } | null
-      } | null
-    } | null
-  }>(network, UPGRADE_CAP_STATE_QUERY, { address: capId }, signal)
+    object: { owner: ObjectOwner | null; asMoveObject: MoveContents } | null
+    lastStored: { nodes: { asMoveObject: MoveContents }[] }
+    package: { version: number; packageVersionsAfter: { nodes: { version: number }[] } } | null
+  }>(network, UPGRADE_CAP_STATE_QUERY, { address: capId, package: packageId }, signal)
   const obj = state.object
   if (!obj) {
-    return { capId, exists: false, owner: null, version: null, policy: null }
+    const last = state.lastStored.nodes[0]?.asMoveObject
+    const stored = upgradeCapData(last?.contents?.type.repr ?? null, last?.contents?.json ?? null)
+    const from = stored?.version != null ? Number(stored.version) : null
+    const to = Math.max(
+      state.package?.version ?? 0,
+      ...(state.package?.packageVersionsAfter.nodes.map((n) => n.version) ?? []),
+    )
+    const wrappedProof = from != null && to > from ? { from, to } : null
+    return { capId, exists: false, owner: null, version: null, policy: null, wrappedProof }
   }
   const cap = upgradeCapData(
     obj.asMoveObject?.contents?.type.repr ?? null,
@@ -1531,6 +1557,7 @@ export async function fetchPackageUpgradeCap(
     owner: obj.owner,
     version: cap?.version ?? null,
     policy: cap?.policy ?? null,
+    wrappedProof: null,
   }
 }
 
@@ -1551,4 +1578,88 @@ export function describeOwner(
     case 'Immutable':
       return { kind: 'immutable' }
   }
+}
+
+/* ────────── package upgrade chain ────────── */
+
+/** One published version of a package — a distinct immutable object per version. */
+export interface PackageVersionRef {
+  address: string
+  version: number
+  /** The publish / upgrade tx, with its checkpoint timestamp (ISO). */
+  tx: { digest: string; timestamp: string | null } | null
+}
+
+const PACKAGE_VERSIONS_QUERY = `
+query PackageVersions($address: SuiAddress!) {
+  package(address: $address) {
+    address
+    version
+    previousTransaction { digest effects { timestamp } }
+    packageVersionsBefore(first: 50) {
+      nodes { address version previousTransaction { digest effects { timestamp } } }
+    }
+    packageVersionsAfter(first: 50) {
+      nodes { address version previousTransaction { digest effects { timestamp } } }
+    }
+  }
+}
+`
+
+interface PackageVersionNode {
+  address: string
+  version: number
+  previousTransaction: { digest: string; effects: { timestamp: string | null } | null } | null
+}
+
+function toVersionRef(n: PackageVersionNode): PackageVersionRef {
+  return {
+    address: n.address,
+    version: n.version,
+    tx: n.previousTransaction
+      ? { digest: n.previousTransaction.digest, timestamp: n.previousTransaction.effects?.timestamp ?? null }
+      : null,
+  }
+}
+
+async function queryPackageVersions(network: Network, packageId: string): Promise<PackageVersionRef[]> {
+  const { data } = await gqlRequest<{
+    package:
+      | (PackageVersionNode & {
+          packageVersionsBefore: { nodes: PackageVersionNode[] }
+          packageVersionsAfter: { nodes: PackageVersionNode[] }
+        })
+      | null
+  }>(network, PACKAGE_VERSIONS_QUERY, { address: packageId })
+  const p = data.package
+  if (!p) return []
+  return [...p.packageVersionsBefore.nodes, p, ...p.packageVersionsAfter.nodes]
+    .map(toVersionRef)
+    .sort((a, b) => a.version - b.version)
+}
+
+// A package page asks for its chain from more than one place (the Versions
+// panel, the Walrus tag), so one in-flight/settled promise is shared per
+// package, good for a minute — long enough to dedupe a page, short enough to
+// see a fresh upgrade. Not tied to a caller's AbortSignal: the promise is
+// shared, so one caller unmounting must not fail it for the others.
+const VERSIONS_TTL_MS = 60_000
+const versionsMemo = new Map<string, { at: number; promise: Promise<PackageVersionRef[]> }>()
+
+/**
+ * Every published version of the package `packageId` belongs to — the
+ * upgrade chain, oldest first, `packageId`'s own version included. A never-
+ * upgraded package yields one entry. (Fifty versions each way is far beyond
+ * any real chain.) Empty when the id isn't a package. Memoised ~1 min.
+ */
+export function fetchPackageVersions(network: Network, packageId: string): Promise<PackageVersionRef[]> {
+  const key = `${network}:${packageId}`
+  const hit = versionsMemo.get(key)
+  if (hit && Date.now() - hit.at < VERSIONS_TTL_MS) return hit.promise
+  const promise = queryPackageVersions(network, packageId).catch((e) => {
+    if (versionsMemo.get(key)?.promise === promise) versionsMemo.delete(key)
+    throw e
+  })
+  versionsMemo.set(key, { at: Date.now(), promise })
+  return promise
 }

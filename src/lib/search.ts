@@ -7,6 +7,8 @@
  * shape) happens later against GraphQL; for now we make the best static guess.
  */
 
+import { networkAlias } from './aliases'
+
 export type SearchKind =
   | 'address'
   | 'object'
@@ -14,6 +16,10 @@ export type SearchKind =
   | 'package'
   | 'suins'
   | 'mvr'
+  /** A per-network alias (`usdc`, `walrus-system`, …) — a well-known type or
+   *  object whose id differs by network (`lib/aliases`); resolved against the
+   *  active one by `AliasView`. */
+  | 'alias'
   /** The network-liveness dashboard — a keyword, not an on-chain id. */
   | 'checkpoints'
   /** The active validator-set dashboard — a keyword, not an on-chain id. */
@@ -31,6 +37,7 @@ export const KIND_META: Record<SearchKind, { tag: string; label: string }> = {
   package: { tag: 'move', label: 'move type / function' },
   suins: { tag: 'suins', label: 'suins name' },
   mvr: { tag: 'mvr', label: 'mvr name' },
+  alias: { tag: 'alias', label: 'well-known alias' },
   checkpoints: { tag: 'checkpoints', label: 'network liveness' },
   validators: { tag: 'validators', label: 'validator set' },
   unknown: { tag: '?', label: '' },
@@ -117,6 +124,12 @@ const FRAMEWORK_ID_BY_KEYWORD = new Map(
   FRAMEWORK_OBJECTS.flatMap((o) => (o.keywords ?? []).map((k) => [k, o.id] as const)),
 )
 
+/** Keyword aliases for well-known framework *types* — `sui` opens the SUI coin
+ *  type's page (`0x2::sui::SUI`), the same view a pasted Move path gets. */
+const FRAMEWORK_TYPE_BY_KEYWORD = new Map<string, string>([
+  ['sui', `${normalizeSuiId('2')}::sui::SUI`],
+])
+
 /** The header tag for a well-known framework id (e.g. `bridge`), or `null`. */
 export function frameworkTagFor(id: string): string | null {
   return FRAMEWORK_TAG_BY_ID.get(id) ?? null
@@ -140,9 +153,24 @@ export function detectSearchKind(input: string): SearchResultKind {
 
   // Keyword aliases for well-known framework objects at fixed ids, so e.g.
   // `random` opens 0x8 without having to remember the address.
-  const keywordId = FRAMEWORK_ID_BY_KEYWORD.get(trimmed.toLowerCase())
+  const lower = trimmed.toLowerCase()
+  const keywordId = FRAMEWORK_ID_BY_KEYWORD.get(lower)
   if (keywordId) {
     return { kind: 'object', value: keywordId, raw }
+  }
+
+  // …and for framework types: `sui` opens 0x2::sui::SUI.
+  const keywordType = FRAMEWORK_TYPE_BY_KEYWORD.get(lower)
+  if (keywordType) {
+    return { kind: 'package', value: keywordType, raw }
+  }
+
+  // Per-network aliases (`usdc`, `walrus-system`, …): unlike the framework
+  // keywords these ids differ per network, so the keyword itself is the value
+  // and `AliasView` resolves it against the active network.
+  const alias = networkAlias(trimmed)
+  if (alias) {
+    return { kind: 'alias', value: alias, raw }
   }
 
   // Move Registry name: `@namespace/app` (optionally a `/version` suffix). The

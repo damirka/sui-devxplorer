@@ -12,6 +12,7 @@ import {
   AtSign,
   CircleArrowUp,
   Coins,
+  Database,
   ExternalLink,
   HandCoins,
   Images,
@@ -71,6 +72,15 @@ import { isUpgradeCapType, policyLabel } from '@/lib/upgradeCap'
 import { formatNumber, formatSui, formatTokenAmount, formatType } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { toCapRows, useUpgradeCapPackageNames, UpgradeCapRow, type CapRow } from './OwnedUpgradeCaps'
+// walrus: the "walrus blobs" view — predicate, data, and row live in src/walrus.
+import {
+  BLOB_CAP,
+  isWalrusBlobType,
+  useOwnedWalrusBlobs,
+  useWalrusState,
+  walrusBlobStatus,
+  WalrusBlobRow,
+} from '@/walrus'
 
 /* ── type predicates ─────────────────────────────────────────────────────── */
 
@@ -139,6 +149,7 @@ type ViewKind =
   | 'publishers'
   | 'staked'
   | 'allowances'
+  | 'walrus'
   | 'displays'
   | 'capabilities'
 
@@ -214,6 +225,14 @@ const VIEWS: ViewSpec[] = [
     title: 'allowances this address funds — one per 0x2::allowance::AllowanceCap held',
     icon: <HandCoins size={13} />,
     match: isAllowanceCapType,
+  },
+  {
+    kind: 'walrus',
+    label: 'Walrus blobs',
+    chip: 'walrus blobs',
+    title: 'all Walrus blob::Blob objects owned here — each dated through the Walrus epoch clock',
+    icon: <Database size={13} />,
+    match: isWalrusBlobType,
   },
   {
     kind: 'displays',
@@ -420,6 +439,10 @@ function OwnedPane({
       return <StakedView network={network} id={id} />
     case 'allowances':
       return <AllowancesView network={network} id={id} />
+    case 'walrus':
+      // The registry knows the network's blob type; the scan's repr covers a
+      // custom endpoint pointed at a network it doesn't know.
+      return <WalrusBlobsView network={network} id={id} type={scanType(isWalrusBlobType)} />
   }
 }
 
@@ -488,6 +511,7 @@ function FullSetView<T>({
   loading = false,
   error = null,
   empty,
+  notice,
   statusOf,
   facetOrder = [],
   renderRow,
@@ -497,6 +521,8 @@ function FullSetView<T>({
   loading?: boolean
   error?: Error | null
   empty: string
+  /** A strip above the facets — e.g. a capped-set warning with a load-all. */
+  notice?: ReactNode
   /** Each row's status bucket; omit for a view without facets. */
   statusOf?: (item: T) => string
   /** The buckets' display order. */
@@ -507,6 +533,7 @@ function FullSetView<T>({
   const split = statusOf ? facetize(items, statusOf, facetOrder, pane.facet) : null
   return (
     <PaneShell label={spec.label} chip={{ label: spec.chip }} action={<Count n={items.length} />}>
+      {notice}
       {split && split.total > 0 && (
         <FacetStrip
           facets={split.facets}
@@ -814,6 +841,36 @@ function SuinsRow({ n, name: o }: { n: number; name: OwnedSuinsName }) {
         {e.expired ? `expired ${e.text}` : e.text}
       </span>
     </MenuRow>
+  )
+}
+
+/** walrus: the Walrus blobs held, faceted active / uncertified / expired
+ *  against the Walrus epoch clock. Loaded into memory for the facets, but
+ *  capped (a publisher holds tens of thousands) with a load-all. See src/walrus. */
+function WalrusBlobsView({ network, id, type }: { network: Network; id: string; type: string | null }) {
+  const blobs = useOwnedWalrusBlobs(network, id, type)
+  const { state } = useWalrusState(network)
+  const now = Date.now()
+  return (
+    <FullSetView
+      spec={viewSpec('walrus')}
+      items={blobs.items}
+      loading={blobs.loading}
+      error={blobs.error}
+      empty="no walrus blobs held."
+      notice={
+        blobs.capped ? (
+          <CappedNotice
+            message={`too many blobs — the first ${formatNumber(BLOB_CAP)} only; facets count those.`}
+            title="load every blob held (a publisher may hold tens of thousands — slow)"
+            onLoadAll={blobs.loadAll}
+          />
+        ) : undefined
+      }
+      statusOf={(b) => walrusBlobStatus(b, state)}
+      facetOrder={['active', 'uncertified', 'expired']}
+      renderRow={(b, i) => <WalrusBlobRow key={b.id} n={i + 1} blob={b} state={state} now={now} />}
+    />
   )
 }
 
@@ -1453,6 +1510,27 @@ function useOwnedTypeScan(network: Network, id: string): OwnedScan {
   return { ...state, loadAll: () => setUnbounded(true) }
 }
 
+/** The "stopped early" strip of a capped scan/list, with its load-all. */
+function CappedNotice({
+  message,
+  title,
+  onLoadAll,
+}: {
+  message: string
+  /** The load-all button's tooltip. */
+  title: string
+  onLoadAll: () => void
+}) {
+  return (
+    <div className="border-line bg-surface-2 mb-3 flex flex-wrap items-center justify-between gap-2 border px-2.5 py-2 font-mono text-xs">
+      <span className="text-muted">{message}</span>
+      <button type="button" onClick={onLoadAll} className="text-primary shrink-0 hover:underline" title={title}>
+        load all
+      </button>
+    </div>
+  )
+}
+
 /* ── left pane: the type breakdown + quick filters ───────────────────────── */
 
 function TypesOwned({
@@ -1525,19 +1603,11 @@ function TypesOwned({
             )}
 
             {capped && (
-              <div className="border-line bg-surface-2 mb-3 flex flex-wrap items-center justify-between gap-2 border px-2.5 py-2 font-mono text-xs">
-                <span className="text-muted">
-                  too many objects — types cover the first {formatNumber(total)} only.
-                </span>
-                <button
-                  type="button"
-                  onClick={loadAll}
-                  className="text-primary shrink-0 hover:underline"
-                  title="scan every owned object (may be slow)"
-                >
-                  load all
-                </button>
-              </div>
+              <CappedNotice
+                message={`too many objects — types cover the first ${formatNumber(total)} only.`}
+                title="scan every owned object (may be slow)"
+                onLoadAll={loadAll}
+              />
             )}
             <input
               value={filterText}

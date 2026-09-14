@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   NetworkContext,
@@ -11,10 +11,22 @@ import {
 
 const readCustomEndpoint = () => customEndpointKey.read() ?? ''
 
+/** The URL rule: a result page (`?search=`) names its network; the landing
+ *  page doesn't. */
+function withNetworkParam(prev: URLSearchParams, network: Network): URLSearchParams {
+  const params = new URLSearchParams(prev)
+  if (params.has('search')) params.set('network', network)
+  else params.delete('network')
+  return params
+}
+
 /**
- * Network selection is part of the shareable URL (`?network=testnet`). The URL
- * is the source of truth; localStorage only seeds the default for a fresh tab.
- * The `custom` network additionally carries a user-supplied GraphQL URL, kept in
+ * Network selection is part of the shareable URL (`?network=`). The URL is the
+ * source of truth; localStorage only seeds the default for a fresh tab. Every
+ * result page carries the network explicitly — mainnet included — so a copied
+ * link opens on the network it was viewed on regardless of the reader's last
+ * pick; only the landing page (no `?search=`) goes without. The `custom`
+ * network additionally carries a user-supplied GraphQL URL, kept in
  * localStorage (not the URL — it's usually a private/local endpoint).
  */
 export function NetworkProvider({ children }: { children: ReactNode }) {
@@ -30,18 +42,23 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const setNetwork = useCallback(
     (next: Network) => {
       networkKey.write(next)
-      setSearchParams(
-        (prev) => {
-          const params = new URLSearchParams(prev)
-          if (next === DEFAULT_NETWORK) params.delete('network')
-          else params.set('network', next)
-          return params
-        },
-        { replace: true },
-      )
+      setSearchParams((prev) => withNetworkParam(prev, next), { replace: true })
     },
     [setSearchParams],
   )
+
+  // Normalise the URL to the rule above: a result page always names its
+  // network (a link built without one, or a hand-typed `?search=`, gets the
+  // active network written in); the landing page never does — its network is
+  // the stored pick, so a `?network=` arriving there is persisted before it's
+  // dropped, and the selection survives. `replace`, so the fix-up leaves no
+  // history entry.
+  const hasSearch = searchParams.has('search')
+  useEffect(() => {
+    if (hasSearch ? fromUrl === network : fromUrl == null) return
+    if (!hasSearch) networkKey.write(network)
+    setSearchParams((prev) => withNetworkParam(prev, network), { replace: true })
+  }, [hasSearch, fromUrl, network, setSearchParams])
 
   const setCustomEndpoint = useCallback(
     (url: string) => {

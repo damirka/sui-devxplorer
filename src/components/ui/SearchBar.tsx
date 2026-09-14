@@ -11,7 +11,8 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { detectSearchKind, KIND_META, type SearchKind, type SearchResultKind } from '@/lib/search'
 import { KeyHints } from './KeyHints'
 import { PromptInput } from './PromptInput'
-import { withSearch } from './links'
+import { useSearchHref, withSearch } from './links'
+import { useNetwork } from '@/context/useNetwork'
 import { cn } from '@/lib/cn'
 import { cycle, isEditableTarget, isModalOpen, useKeydown } from '@/lib/hotkeys'
 
@@ -38,6 +39,8 @@ const HINTS: { example: string; label: string; kind: SearchKind }[] = [
   { example: '0x2::balance::send_funds', label: 'function', kind: 'package' },
   { example: '@adeniyi', label: 'suins', kind: 'suins' },
   { example: '@deepbook/core', label: 'mvr', kind: 'mvr' },
+  { example: 'walrus-system', label: 'walrus', kind: 'alias' },
+  { example: 'usdc', label: 'coin', kind: 'alias' },
   { example: 'CiWfdYkKqsvkxp7DSWhjLjtyosvhea9vS1kPcZnNvghM', label: 'txs', kind: 'transaction' },
   { example: 'checkpoints', label: 'liveness', kind: 'checkpoints' },
   { example: 'validators', label: 'validators', kind: 'validators' },
@@ -59,7 +62,9 @@ const NAV_KEYS = ['↑', '↓', '↵']
  * chunky block caret; `compact` is the boxed field used in the header.
  */
 export function SearchBar({ variant = 'hero', autoFocus, hints, onNavigate }: SearchBarProps) {
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [, setSearchParams] = useSearchParams()
+  const { network } = useNetwork()
+  const searchHref = useSearchHref()
   const [value, setValue] = useState('')
   const [focused, setFocused] = useState(false)
   const [caret, setCaret] = useState(0)
@@ -125,7 +130,6 @@ export function SearchBar({ variant = 'hero', autoFocus, hints, onNavigate }: Se
   // example highlighted. `detected` is null until there's something to classify.
   const showHints = !!hints && variant === 'hero' && focused
   const detected = trimmed ? detectSearchKind(trimmed) : null
-  const hintHref = (example: string) => `?${withSearch(searchParams, example).toString()}`
 
   // Run a search for `q`: write `?search=` (a shareable link) and reset the box.
   // Shared by the form submit (the typed value) and by opening a hint row.
@@ -133,12 +137,12 @@ export function SearchBar({ variant = 'hero', autoFocus, hints, onNavigate }: Se
     (q: string) => {
       const v = q.trim()
       if (!v) return
-      setSearchParams((prev) => withSearch(prev, v))
+      setSearchParams((prev) => withSearch(prev, v, null, network))
       setValue('')
       inputRef.current?.blur()
       onNavigate?.()
     },
-    [setSearchParams, onNavigate],
+    [setSearchParams, onNavigate, network],
   )
 
   function submit(e: FormEvent) {
@@ -344,7 +348,7 @@ export function SearchBar({ variant = 'hero', autoFocus, hints, onNavigate }: Se
         {showHints && (
           <HintsDropdown
             detected={detected}
-            hintHref={hintHref}
+            hintHref={searchHref}
             activeHint={activeHint}
             onHover={setActiveHint}
           />

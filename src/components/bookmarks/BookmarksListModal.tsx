@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { KeyHints, type KeyHint } from '@/components/ui/KeyHints'
 import { Modal } from '@/components/ui/Modal'
 import { PromptInput } from '@/components/ui/PromptInput'
@@ -66,7 +66,6 @@ function haystack(b: Bookmark): string {
 function BookmarkList({ onClose, network, canAdd, onAdd, onRename }: ListProps) {
   const bookmarks = useBookmarks(network)
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
   const [filter, setFilter] = useState('')
   const [active, setActive] = useState(0)
   const [actionsOpen, setActionsOpen] = useState(false)
@@ -96,12 +95,12 @@ function BookmarkList({ onClose, network, canAdd, onAdd, onRename }: ListProps) 
   }, [idx])
 
   /** Href to open a bookmark: its params on the current network — the list
-   *  only ever holds this network's bookmarks, so just carry `?network=` over
-   *  as the URL has it now. */
+   *  only ever holds this network's bookmarks, and every result URL names its
+   *  network (the landing page's URL doesn't, so read the active one, not the
+   *  param). */
   function hrefFor(b: Bookmark): string {
     const p = new URLSearchParams(b.params)
-    const net = searchParams.get('network')
-    if (net) p.set('network', net)
+    p.set('network', network)
     return `?${p.toString()}`
   }
 

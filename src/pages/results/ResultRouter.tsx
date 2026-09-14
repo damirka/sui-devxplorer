@@ -7,6 +7,7 @@ import { MvrView } from './MvrView'
 import { CheckpointsView } from './CheckpointsView'
 import { ValidatorsView } from './ValidatorsView'
 import { NotFound } from './NotFound'
+import { AliasView } from './AliasView'
 
 /** Classify the raw search string and render the matching result view. */
 export function ResultRouter({
@@ -30,6 +31,8 @@ export function ResultRouter({
       return <SuinsView value={value} />
     case 'mvr':
       return <MvrView value={value} />
+    case 'alias':
+      return <AliasView value={value} version={version} />
     case 'checkpoints':
       return <CheckpointsView />
     case 'validators':

@@ -60,6 +60,11 @@ import {
   innerKeySignature,
   reprFromSignature,
 } from './moveType'
+// walrus: header tags + the callout under the header (see src/walrus). The
+// components are imported directly, not via the barrel, to keep the barrel
+// out of this view's import graph.
+import { WalrusTags } from '@/walrus/components/WalrusTags'
+import { WalrusNote } from '@/walrus/components/WalrusNote'
 
 // The Sui system state at 0x5 gets a full callout — it backs the validators
 // dashboard, which the callout links to. Its inner value (the versioned
@@ -413,6 +418,7 @@ export function ObjectView({
               <Badge title="the funder's revocation handle for an allowance">allowance cap</Badge>
             )}
             {suins && <Badge kind="suins">suins</Badge>}
+            <WalrusTags value={value} type={objType} isPackage={isPackage} />
             {bridgePaused != null && (
               <Badge
                 tone={bridgePaused ? 'danger' : undefined}
@@ -440,6 +446,8 @@ export function ObjectView({
       {suins && (
         <SuinsNote domain={suins.domain} expirationMs={suins.expirationMs} now={Date.now()} />
       )}
+
+      <WalrusNote value={value} type={objType} json={obj?.asMoveObject?.contents?.json} isPackage={isPackage} />
 
       {loading && (
         <Panel>

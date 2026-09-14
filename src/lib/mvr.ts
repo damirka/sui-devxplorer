@@ -309,45 +309,6 @@ export async function fetchMvrName(
   }
 }
 
-/* ── versions ────────────────────────────────────────────────────────── */
-
-export interface MvrVersion {
-  version: number
-  packageId: string
-}
-
-/**
- * Resolve every version `1..latest` of a name to its package id, via the bulk
- * forward-resolution endpoint (chunked to the 50-name request cap). Versions
- * that don't resolve are skipped; the result is ordered by version ascending.
- */
-export async function fetchMvrVersions(
-  network: Network,
-  name: string,
-  latest: number,
-  signal?: AbortSignal,
-): Promise<MvrVersion[]> {
-  if (!mvrSupported(network) || latest < 1) return []
-
-  const out: MvrVersion[] = []
-  for (let start = 1; start <= latest; start += BULK_LIMIT) {
-    const end = Math.min(start + BULK_LIMIT - 1, latest)
-    const names: string[] = []
-    for (let v = start; v <= end; v++) names.push(`${name}/${v}`)
-
-    const data = await mvrPost<{
-      resolution: Record<string, { package_id: string } | null>
-    }>(network, '/v1/resolution/bulk', { names }, signal)
-    const resolution = data?.resolution ?? {}
-
-    for (let v = start; v <= end; v++) {
-      const pid = resolution[`${name}/${v}`]?.package_id
-      if (pid) out.push({ version: v, packageId: pid })
-    }
-  }
-  return out
-}
-
 /* ── dependents (packages that depend on this one) ───────────────────── */
 
 export interface MvrDependent {
@@ -414,11 +375,12 @@ export interface MvrPackageInfo {
   /** The base name assigned to this package. */
   name: string
   record: MvrName
-  versions: MvrVersion[]
 }
 
 /**
- * Resolve a package's MVR identity: its registry record and full version list.
+ * Resolve a package's MVR identity: its registry record. The version list
+ * isn't fetched here — the registry's `@name/N` numbering is the package's
+ * on-chain upgrade chain, which `fetchPackageVersions` (`lib/object`) walks.
  *
  * When `knownName` is given (we arrived via a name search), it's used directly
  * — important because reverse resolution only works for packages whose owner
@@ -441,6 +403,5 @@ export async function fetchMvrForPackage(
   const record = await fetchMvrName(network, name, signal)
   if (!record) return null
 
-  const versions = await fetchMvrVersions(network, name, record.version, signal)
-  return { name, record, versions }
+  return { name, record }
 }
